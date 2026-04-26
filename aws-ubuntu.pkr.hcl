@@ -10,11 +10,25 @@ packer {
     }
   }
 }
+#Variables
+variable "region" {
+  default = "us-east-1"
+}
 
+variable "instance_type" {
+  default = "t2.micro"
+}
+
+variable "image_name" {
+  default = "my-image"
+}
+
+variable "gcp_project" {
+  default = "packer-demo-456789"
+}
 source "amazon-ebs" "aws" {
   region        = var.region
   instance_type = var.instance_type
-  ami_name      = var.image_name
   source_ami_filter {
     filters = {
       name                = "amzn2-ami-hvm-*"
@@ -30,11 +44,11 @@ source "amazon-ebs" "aws" {
 }
 source "googlecompute" "gcp" {
   project_id  = var.gcp_project
-  zone        = "us-central1-a"
-  machine_type = "n1-standard-1"
+  region        = var.region
+  instance_type = var.instance_type
 
   source_image_family = "debian-10"
-  source_image_project_id = "debian-cloud"
+  source_image_project_id = ["debian-cloud"]
 
   ssh_username = "packer"
   image_name   = var.image_name
