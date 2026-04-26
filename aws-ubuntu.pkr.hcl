@@ -7,18 +7,14 @@ packer {
     googlecompute = {
       source  = "github.com/hashicorp/googlecompute"
       version = "~> 1"
+    }
   }
 }
-
-variable "region" {}
-variable "instance_type" {}
-variable "image_name" {}
-variable "gcp_project" {}
 
 source "amazon-ebs" "aws" {
   region        = var.region
   instance_type = var.instance_type
-
+  ami_name      = var.image_name
   source_ami_filter {
     filters = {
       name                = "amzn2-ami-hvm-*"
@@ -50,5 +46,4 @@ build {
   provisioner "shell" {
     script = "install_nginx.sh"
   }
-}
 }
