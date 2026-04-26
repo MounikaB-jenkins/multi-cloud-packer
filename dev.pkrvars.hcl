@@ -1,6 +1,16 @@
-region        = "eu-west-1"
-instance_type = "t2.micro"
-image_name    = "demo-image-dev"
+#Variables
+variable "region" {
+  default = "us-east-1"
+}
 
-# GCP
-gcp_project = "packer-demo-456789"
+variable "instance_type" {
+  default = "t2.micro"
+}
+
+variable "image_name" {
+  default = "my-image"
+}
+
+variable "gcp_project" {
+  default = "packer-demo-456789"
+}
