@@ -35,7 +35,7 @@ source "amazon-ebs" "aws" {
 
   source_ami_filter {
     filters = {
-      name                = "amzn2-ami-hvm-*"
+      name                = "amzn2-ami-hvm-*-x86_64-gp2"
       root-device-type    = "ebs"
       virtualization-type = "hvm"
     }
