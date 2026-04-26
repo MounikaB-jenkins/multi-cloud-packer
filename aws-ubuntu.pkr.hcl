@@ -51,3 +51,4 @@ build {
     script = "install_nginx.sh"
   }
 }
+}
