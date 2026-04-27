@@ -44,7 +44,7 @@ source "amazon-ebs" "aws" {
   }
 
   ssh_username = "ec2-user"
-  ami_name     = var.image_name
+  ami_name = "${var.image_name}-${timestamp()}"
 }
 
 # GCP Source (FIXED)
