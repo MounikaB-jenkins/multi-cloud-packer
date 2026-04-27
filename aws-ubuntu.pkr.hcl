@@ -53,11 +53,11 @@ source "googlecompute" "gcp" {
   zone       = "us-central1-a"        # REQUIRED
   machine_type = "e2-micro"           # instead of instance_type
 
-  source_image_family     = "debian-10"
+  source_image_family     = "debian-11"
   source_image_project_id = ["debian-cloud"]
 
   ssh_username = "packer"
-  image_name   = var.image_name
+  image_name   = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
 }
 
 # Build
