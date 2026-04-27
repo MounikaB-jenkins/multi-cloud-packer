@@ -50,7 +50,7 @@ source "amazon-ebs" "aws" {
 # GCP Source (FIXED)
 source "googlecompute" "gcp" {
   project_id = var.gcp_project
-  zone       = "us-central1"        # REQUIRED
+  zone       = "us-west1"        # REQUIRED
   machine_type = "e2-micro"           # instead of instance_type
 
   source_image_family     = "debian-11"
