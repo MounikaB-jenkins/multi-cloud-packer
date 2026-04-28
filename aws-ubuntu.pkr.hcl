@@ -70,4 +70,9 @@ build {
   provisioner "shell" {
     script = "install_nginx.sh"
   }
+
+  post-processor "manifest" {
+    output = "manifest.json"
+    strip_path = true
+  }
 }
