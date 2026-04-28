@@ -60,15 +60,14 @@ source "googlecompute" "gcp" {
   zone         = "us-central1-a"
   machine_type = "e2-micro"
 
-  source_image_family  = "ubuntu-2004-lts"
+  source_image_family  = "ubuntu-2204-lts"
   source_image_project_id = ["ubuntu-os-cloud"]
 
   ssh_username = "ubuntu"
 
   image_name = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
 
-  # IMPORTANT: adjust if no default network
-  network    = "global/networks/default"
+  network = "global/networks/default"
 }
 
 # ---------------- BUILD ----------------
