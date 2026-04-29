@@ -131,7 +131,7 @@ build {
   ]
 
   provisioner "shell" {
-    script       = "scripts/install_nginx.sh"
+    script       = "install_nginx.sh"
     execute_command = "sudo sh -c '{{ .Vars }} {{ .Path }}'"
   }
 
