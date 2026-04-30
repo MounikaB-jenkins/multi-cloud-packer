@@ -95,26 +95,32 @@ source "googlecompute" "gcp" {
 
   network = "global/networks/default"
 }
-
 # ---------- Azure (UBUNTU) ----------
 source "azure-arm" "azure" {
   location            = var.azure_location
   resource_group_name = var.azure_resource_group
   vm_size             = "Standard_B1s"
 
-  # Correct syntax for Azure image reference
+  # Image reference (Ubuntu 20.04 LTS)
   image_publisher = "Canonical"
   image_offer     = "0001-com-ubuntu-server-focal"
   image_sku       = "20_04-lts-gen2"
   image_version   = "latest"
 
+  # Required for creating a managed image
+  managed_image_name             = "${var.image_name}-azure-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  managed_image_resource_group_name = var.azure_resource_group
+
+  # SSH settings
   os_type         = "Linux"
-  managed_image_name = "${var.image_name}-azure-${formatdate("YYYYMMDDhhmmss", timestamp())}"
   ssh_username    = var.ssh_username
   ssh_password    = "" # Disable password auth
   ssh_timeout     = "20m"
-}
 
+  # Temporary storage for the build (optional but recommended)
+  storage_account      = "packer${random_id.build_suffix.hex}" # Unique storage account name
+  resource_group_name  = var.azure_resource_group # Same as above
+}
 # ---------- BUILD ----------
 build {
   sources = [
