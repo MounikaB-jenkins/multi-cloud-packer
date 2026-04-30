@@ -8,6 +8,10 @@ packer {
       source  = "github.com/hashicorp/googlecompute"
       version = "~> 1"
     }
+    azure = {
+      source  = "github.com/hashicorp/azure"
+      version = "~> 2"
+    }
   }
 }
 
@@ -26,6 +30,10 @@ variable "image_name" {
 
 variable "gcp_project" {
   default = "packer-demo-456789"
+}
+
+variable "azure_resource_group" {
+  default = "packer-resources"
 }
 
 # ---------------- AWS (UBUNTU) ----------------
@@ -69,17 +77,54 @@ source "googlecompute" "gcp" {
 
   # IMPORTANT: adjust if no default network
   network    = "global/networks/default"
+
+  image_labels = {
+    name        = var.image_name
+    environment = "dev"
+    createdby   = "packer"
+  }
+}
+
+# ---------------- AZURE (UBUNTU) ----------------
+source "azure-arm" "azure" {
+  use_azure_cli_auth = true
+
+  os_type         = "Linux"
+  image_publisher = "Canonical"
+  image_offer     = "0001-com-ubuntu-server-focal"
+  image_sku       = "20_04-lts"
+  
+  location = "East US"
+  vm_size  = "Standard_B1s"
+
+  managed_image_resource_group_name = var.azure_resource_group
+  managed_image_name                = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+
+  azure_tags = {
+    Name        = var.image_name
+    Environment = "dev"
+    CreatedBy   = "packer"
+  }
 }
 
 # ---------------- BUILD ----------------
 build {
   sources = [
     "source.amazon-ebs.aws",
-    "source.googlecompute.gcp"
+    "source.googlecompute.gcp",
+    "source.azure-arm.azure"
   ]
 
   provisioner "shell" {
     script = "install_nginx.sh"
+  }
+
+  provisioner "shell" {
+    execute_command = "chmod +x {{ .Path }}; {{ .Vars }} sudo -E sh '{{ .Path }}'"
+    inline = [
+      "/usr/sbin/waagent -force -deprovision+user && export HISTSIZE=0 && sync"
+    ]
+    only = ["azure-arm.azure"]
   }
 
   post-processor "manifest" {
@@ -87,3 +132,4 @@ build {
     strip_path = true
   }
 }
+#
