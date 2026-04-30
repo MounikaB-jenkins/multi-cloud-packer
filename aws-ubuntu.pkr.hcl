@@ -8,55 +8,27 @@ packer {
       source  = "github.com/hashicorp/googlecompute"
       version = "~> 1"
     }
-    azure = {
-      source  = "github.com/hashicorp/azure"
-      version = "~> 1"
-    }
   }
 }
 
-# ---------- Variables ----------
+# Variables
 variable "region" {
-  type    = string
   default = "us-east-1"
 }
 
 variable "instance_type" {
-  type    = string
   default = "t2.micro"
 }
 
 variable "image_name" {
-  type    = string
   default = "multi-cloud-ubuntu"
 }
 
 variable "gcp_project" {
-  type    = string
   default = "packer-demo-456789"
 }
 
-variable "gcp_zone" {
-  type    = string
-  default = "us-central1-a"
-}
-
-variable "azure_location" {
-  type    = string
-  default = "East US"
-}
-
-variable "azure_resource_group" {
-  type    = string
-  default = "packer-resources"
-}
-
-variable "ssh_username" {
-  type    = string
-  default = "ubuntu"
-}
-
-# ---------- AWS (UBUNTU) ----------
+# ---------------- AWS (UBUNTU) ----------------
 source "amazon-ebs" "aws" {
   region        = var.region
   instance_type = var.instance_type
@@ -71,72 +43,47 @@ source "amazon-ebs" "aws" {
     most_recent = true
   }
 
-  ssh_username = var.ssh_username
-  ami_name     = "${var.image_name}-aws-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  ssh_username = "ubuntu"
+
+  ami_name = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
 
   tags = {
     Name        = var.image_name
     Environment = "dev"
     CreatedBy   = "packer"
-    Cloud       = "aws"
   }
 }
 
-# ---------- GCP (UBUNTU) ----------
+# ---------------- GCP (UBUNTU) ----------------
 source "googlecompute" "gcp" {
-  project_id          = var.gcp_project
-  zone                = var.gcp_zone
-  machine_type        = "e2-micro"
-  source_image_family = "ubuntu-2204-lts"
-  ssh_username        = var.ssh_username
-  image_name          = "${var.image_name}-gcp-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  project_id   = var.gcp_project
+  zone         = "us-central1-a"
+  machine_type = "e2-micro"
 
-  tags = ["http-server", "https-server", var.image_name]
+  source_image_family  = "ubuntu-2004-lts"
+  source_image_project_id = ["ubuntu-os-cloud"]
 
-  network = "global/networks/default"
+  ssh_username = "ubuntu"
+
+  image_name = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+
+  # IMPORTANT: adjust if no default network
+  network    = "global/networks/default"
 }
 
-# ---------- Azure (UBUNTU) ----------
-source "azure-arm" "azure" {
-  location                     = var.azure_location
-  resource_group_name          = var.azure_resource_group  # Only define once
-  vm_size                      = "Standard_B1s"
-
-  # Image reference (Ubuntu 20.04 LTS)
-  image_publisher              = "Canonical"
-  image_offer                  = "0001-com-ubuntu-server-focal"
-  image_sku                    = "20_04-lts-gen2"
-  image_version                = "latest"
-
-  # Required for creating a managed image
-  managed_image_name            = "${var.image_name}-azure-${formatdate("YYYYMMDDhhmmss", timestamp())}"
-  managed_image_resource_group_name = var.azure_resource_group
-
-  # SSH settings
-  os_type                      = "Linux"
-  ssh_username                 = var.ssh_username
-  ssh_password                 = "" # Disable password auth
-  ssh_timeout                  = "20m"
-
-  # Temporary storage for the build (optional but recommended)
-  storage_account              = "packer${random_id.build_suffix.hex}"
-}
-
-# ---------- BUILD ----------
+# ---------------- BUILD ----------------
 build {
   sources = [
     "source.amazon-ebs.aws",
-    "source.googlecompute.gcp",
-    "source.azure-arm.azure"
+    "source.googlecompute.gcp"
   ]
 
   provisioner "shell" {
-    script       = "install_nginx.sh"
-    execute_command = "sudo sh -c '{{ .Vars }} {{ .Path }}'"
+    script = "install_nginx.sh"
   }
 
   post-processor "manifest" {
-    output     = "manifest.json"
+    output = "manifest.json"
     strip_path = true
   }
 }
