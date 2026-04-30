@@ -102,24 +102,17 @@ source "azure-arm" "azure" {
   resource_group_name = var.azure_resource_group
   vm_size             = "Standard_B1s"
 
-  source_image_reference {
-    publisher = "Canonical"
-    offer     = "0001-com-ubuntu-server-focal"
-    sku       = "20_04-lts-gen2"
-    version   = "latest"
-  }
+  # Correct syntax for Azure image reference
+  image_publisher = "Canonical"
+  image_offer     = "0001-com-ubuntu-server-focal"
+  image_sku       = "20_04-lts-gen2"
+  image_version   = "latest"
 
   os_type         = "Linux"
-  image_name      = "${var.image_name}-azure-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  managed_image_name = "${var.image_name}-azure-${formatdate("YYYYMMDDhhmmss", timestamp())}"
   ssh_username    = var.ssh_username
   ssh_password    = "" # Disable password auth
   ssh_timeout     = "20m"
-
-  tags = {
-    Environment = "dev"
-    CreatedBy   = "packer"
-    Cloud       = "azure"
-  }
 }
 
 # ---------- BUILD ----------
@@ -131,7 +124,7 @@ build {
   ]
 
   provisioner "shell" {
-    script       = "install_nginx.sh"  # Updated path
+    script       = "install_nginx.sh"
     execute_command = "sudo sh -c '{{ .Vars }} {{ .Path }}'"
   }
 
