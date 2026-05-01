@@ -68,7 +68,7 @@ source "amazon-ebs" "aws" {
 
   source_ami_filter {
     filters = {
-      name                = "ubuntu/images/hvm-ssd/ubuntu-focal-20.04-amd64-server-*"
+      name                = "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"
       root-device-type    = "ebs"
       virtualization-type = "hvm"
     }
@@ -93,7 +93,7 @@ source "googlecompute" "gcp" {
   zone         = var.gcp_zone
   machine_type = "e2-micro"
 
-  source_image_family     = "ubuntu-2004-lts"
+  source_image_family     = "ubuntu-2204-lts"
   source_image_project_id = ["ubuntu-os-cloud"]
 
   ssh_username = "ubuntu"
@@ -121,8 +121,8 @@ source "azure-arm" "azure" {
 
   os_type         = "Linux"
   image_publisher = "Canonical"
-  image_offer     = "0001-com-ubuntu-server-focal"
-  image_sku       = "20_04-lts"
+  image_offer     = "0001-com-ubuntu-server-jammy"
+  image_sku       = "22_04-lts"
   
   location = var.azure_location
   vm_size  = "Standard_B1s"
