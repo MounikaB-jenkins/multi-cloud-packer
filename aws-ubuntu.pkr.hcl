@@ -41,7 +41,7 @@ variable "image_type" {
   
   validation {
     condition     = contains(["Linux", "Windows"], var.image_type)
-    error_message = "image_type must be either 'Linux' or 'Windows'."
+    error_message = "Image type must be either Linux or Windows."
   }
 }
 
@@ -105,7 +105,6 @@ variable "azure_tenant_id" {
 
 # ==================== LINUX SOURCES ====================
 source "amazon-ebs" "aws_linux" {
-  count             = var.image_type == "Linux" ? 1 : 0
   region            = var.region
   instance_type     = var.instance_type
   associate_public_ip_address = !var.disable_public_ip
@@ -132,7 +131,6 @@ source "amazon-ebs" "aws_linux" {
 }
 
 source "googlecompute" "gcp_linux" {
-  count            = var.image_type == "Linux" ? 1 : 0
   project_id       = var.gcp_project
   zone             = var.gcp_zone
   machine_type     = "e2-micro"
@@ -154,7 +152,6 @@ source "googlecompute" "gcp_linux" {
 }
 
 source "azure-arm" "azure_linux" {
-  count              = var.image_type == "Linux" ? 1 : 0
   use_azure_cli_auth = false
   
   client_id       = var.azure_client_id
@@ -183,7 +180,6 @@ source "azure-arm" "azure_linux" {
 
 # ==================== WINDOWS SOURCES ====================
 source "amazon-ebs" "aws_windows" {
-  count             = var.image_type == "Windows" ? 1 : 0
   region            = var.region
   instance_type     = var.instance_type
   associate_public_ip_address = !var.disable_public_ip
@@ -198,9 +194,9 @@ source "amazon-ebs" "aws_windows" {
     most_recent = true
   }
 
-  communicator  = "winrm"
+  communicator   = "winrm"
   winrm_username = "Administrator"
-  ami_name      = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  ami_name       = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
 
   tags = {
     Name        = var.image_name
@@ -208,12 +204,9 @@ source "amazon-ebs" "aws_windows" {
     OSType      = "Windows"
     CreatedBy   = "packer"
   }
-
-  user_data = base64encode(file("${path.root}/user_data_windows.ps1"))
 }
 
 source "googlecompute" "gcp_windows" {
-  count            = var.image_type == "Windows" ? 1 : 0
   project_id       = var.gcp_project
   zone             = var.gcp_zone
   machine_type     = "e2-standard-2"
@@ -236,7 +229,6 @@ source "googlecompute" "gcp_windows" {
 }
 
 source "azure-arm" "azure_windows" {
-  count              = var.image_type == "Windows" ? 1 : 0
   use_azure_cli_auth = false
   
   client_id       = var.azure_client_id
@@ -270,18 +262,14 @@ source "azure-arm" "azure_windows" {
 
 # ==================== BUILD BLOCK ====================
 build {
-  sources = concat(
-    var.image_type == "Linux" ? [
-      "source.amazon-ebs.aws_linux",
-      "source.googlecompute.gcp_linux",
-      "source.azure-arm.azure_linux"
-    ] : [],
-    var.image_type == "Windows" ? [
-      "source.amazon-ebs.aws_windows",
-      "source.googlecompute.gcp_windows",
-      "source.azure-arm.azure_windows"
-    ] : []
-  )
+  sources = [
+    "source.amazon-ebs.aws_linux",
+    "source.googlecompute.gcp_linux",
+    "source.azure-arm.azure_linux",
+    "source.amazon-ebs.aws_windows",
+    "source.googlecompute.gcp_windows",
+    "source.azure-arm.azure_windows"
+  ]
 
   # Linux provisioners
   provisioner "shell" {

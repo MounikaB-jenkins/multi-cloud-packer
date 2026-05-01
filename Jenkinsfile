@@ -61,10 +61,12 @@ pipeline {
                         "-var \"disable_public_ip=${params.DISABLE_PUBLIC_IP}\""
                     ].join(" ")
 
+                    // Determine source names based on image type
+                    def osType = params.IMAGE_TYPE == "Windows" ? "windows" : "linux"
                     def sources = []
-                    if (params.BUILD_AWS) sources.add("amazon-ebs.aws")
-                    if (params.BUILD_GCP) sources.add("googlecompute.gcp")
-                    if (params.BUILD_AZURE) sources.add("azure-arm.azure")
+                    if (params.BUILD_AWS) sources.add("amazon-ebs.aws_${osType}")
+                    if (params.BUILD_GCP) sources.add("googlecompute.gcp_${osType}")
+                    if (params.BUILD_AZURE) sources.add("azure-arm.azure_${osType}")
 
                     if (sources.size() == 0) {
                         error("No cloud providers selected for build.")
@@ -119,18 +121,17 @@ pipeline {
                         }
 
                         manifest.builds?.each { build ->
-                            if (build.name == "amazon-ebs.aws") {
+                            if (build.name.contains("aws")) {
                                 env.AMI_ID = build.artifact_id?.split(":")[1]
-                            } else if (build.name == "googlecompute.gcp") {
+                                echo "✓ AWS AMI ID: ${env.AMI_ID}"
+                            } else if (build.name.contains("gcp")) {
                                 env.GCP_IMAGE = build.artifact_id?.split("/")?.last()
-                            } else if (build.name == "azure-arm.azure") {
+                                echo "✓ GCP Image: ${env.GCP_IMAGE}"
+                            } else if (build.name.contains("azure")) {
                                 env.AZURE_IMAGE = build.artifact_id
+                                echo "✓ Azure Image: ${env.AZURE_IMAGE}"
                             }
                         }
-                        
-                        echo "AWS: ${env.AMI_ID ?: 'N/A'}"
-                        echo "GCP: ${env.GCP_IMAGE ?: 'N/A'}"
-                        echo "Azure: ${env.AZURE_IMAGE ?: 'N/A'}"
                     } catch (Exception e) {
                         echo "Warning: Could not parse manifest - ${e.message}"
                     }
