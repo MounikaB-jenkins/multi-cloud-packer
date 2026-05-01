@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-# Logging
-exec > >(tee -a /var/log/packer-provision.log) 2>&1
+# Logging disabled to avoid permission issues inside the Packer shell provisioner
+# exec > >(tee -a /var/log/packer-provision.log) 2>&1
 
 echo "===== Starting Nginx Provisioning ====="
 
@@ -21,6 +21,8 @@ echo "Detected OS: $OS_TYPE"
 case $OS_TYPE in
     ubuntu|debian)
         echo "Installing Nginx on Debian/Ubuntu..."
+        sudo mkdir -p /var/lib/apt/lists
+        sudo chmod 755 /var/lib/apt/lists
         sudo apt-get update -y
         sudo apt-get install -y nginx
         NGINX_HTML_DIR="/var/www/html"

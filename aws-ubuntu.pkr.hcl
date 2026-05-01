@@ -36,6 +36,14 @@ variable "azure_resource_group" {
   default = "packer-resources"
 }
 
+variable "gcp_zone" {
+  default = "us-central1-a"
+}
+
+variable "azure_location" {
+  default = "East US"
+}
+
 # ---------------- AWS (UBUNTU) ----------------
 source "amazon-ebs" "aws" {
   region        = var.region
@@ -65,11 +73,11 @@ source "amazon-ebs" "aws" {
 # ---------------- GCP (UBUNTU) ----------------
 source "googlecompute" "gcp" {
   project_id   = var.gcp_project
-  zone         = "us-central1-a"
+  zone         = var.gcp_zone
   machine_type = "e2-micro"
 
-  source_image_family  = "ubuntu-2004-lts"
-  source_image_project_id = ["ubuntu-os-cloud"]
+  source_image_family     = "ubuntu-2004-lts"
+  source_image_project_id = "ubuntu-os-cloud"
 
   ssh_username = "ubuntu"
 
@@ -94,7 +102,7 @@ source "azure-arm" "azure" {
   image_offer     = "0001-com-ubuntu-server-focal"
   image_sku       = "20_04-lts"
   
-  location = "East US"
+  location = var.azure_location
   vm_size  = "Standard_B1s"
 
   managed_image_resource_group_name = var.azure_resource_group

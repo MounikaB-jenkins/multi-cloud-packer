@@ -49,6 +49,8 @@ pipeline {
                         "-var image_name=${params.IMAGE_NAME}",
                         "-var region=${params.AWS_REGION}",
                         "-var gcp_project=${params.GCP_PROJECT}",
+                        "-var gcp_zone=${params.GCP_ZONE}",
+                        "-var azure_location=${params.AZURE_LOCATION}",
                         "-var azure_resource_group=${params.AZURE_RESOURCE_GROUP}"
                     ].join(" ")
 
@@ -87,6 +89,9 @@ pipeline {
                         set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
                         set ARM_SUBSCRIPTION_ID=${env.AZURE_SUBSCRIPTION_ID}
                         set ARM_TENANT_ID=${env.AZURE_TENANT_ID}
+
+                        az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant %ARM_TENANT_ID%
+                        az account set --subscription %ARM_SUBSCRIPTION_ID%
 
                         ${PACKER} build ${onlyFlag} ${vars} ${PACKER_TEMPLATE}
                         """
