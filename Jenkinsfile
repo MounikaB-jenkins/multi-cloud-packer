@@ -46,12 +46,12 @@ pipeline {
                 script {
                     def packerCmd = "${PACKER} build "
                     def vars = [
-                        "-var image_name=${params.IMAGE_NAME}",
-                        "-var region=${params.AWS_REGION}",
-                        "-var gcp_project=${params.GCP_PROJECT}",
-                        "-var gcp_zone=${params.GCP_ZONE}",
-                        "-var azure_location=${params.AZURE_LOCATION}",
-                        "-var azure_resource_group=${params.AZURE_RESOURCE_GROUP}"
+                        "-var \"image_name=${params.IMAGE_NAME}\"",
+                        "-var \"region=${params.AWS_REGION}\"",
+                        "-var \"gcp_project=${params.GCP_PROJECT}\"",
+                        "-var \"gcp_zone=${params.GCP_ZONE}\"",
+                        "-var \"azure_location=${params.AZURE_LOCATION}\"",
+                        "-var \"azure_resource_group=${params.AZURE_RESOURCE_GROUP}\""
                     ].join(" ")
 
                     def sources = []
@@ -90,8 +90,14 @@ pipeline {
                         set ARM_SUBSCRIPTION_ID=${env.AZURE_SUBSCRIPTION_ID}
                         set ARM_TENANT_ID=${env.AZURE_TENANT_ID}
 
-                        az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant %ARM_TENANT_ID%
-                        az account set --subscription %ARM_SUBSCRIPTION_ID%
+                        REM Attempt Azure login if Azure CLI is available
+                        where az >nul 2>&1
+                        if %ERRORLEVEL% equ 0 (
+                            az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant %ARM_TENANT_ID%
+                            az account set --subscription %ARM_SUBSCRIPTION_ID%
+                        ) else (
+                            echo WARNING: Azure CLI not found. Skipping Azure login. Packer will use environment variables.
+                        )
 
                         ${PACKER} build ${onlyFlag} ${vars} ${PACKER_TEMPLATE}
                         """
