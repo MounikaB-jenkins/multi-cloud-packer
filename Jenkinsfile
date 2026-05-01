@@ -53,9 +53,9 @@ pipeline {
                     ].join(" ")
 
                     def sources = []
-                    if (params.BUILD_AWS) sources.add("source.amazon-ebs.aws")
-                    if (params.BUILD_GCP) sources.add("source.googlecompute.gcp")
-                    if (params.BUILD_AZURE) sources.add("source.azure-arm.azure")
+                    if (params.BUILD_AWS) sources.add("amazon-ebs.aws")
+                    if (params.BUILD_GCP) sources.add("googlecompute.gcp")
+                    if (params.BUILD_AZURE) sources.add("azure-arm.azure")
 
                     if (sources.size() == 0) {
                         error("No cloud providers selected for build.")
