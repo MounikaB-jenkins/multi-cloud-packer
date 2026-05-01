@@ -5,11 +5,16 @@ pipeline {
 
     parameters {
         string(name: 'IMAGE_NAME', defaultValue: 'multi-cloud-ubuntu', description: 'Name for the Packer image')
-        string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region for AMI')
-        string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID')
+        choice(name: 'IMAGE_TYPE', choices: ['Linux', 'Windows'], description: 'Operating system type')
+        string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region')
         string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone')
         string(name: 'AZURE_LOCATION', defaultValue: 'East US', description: 'Azure region')
+        string(name: 'INSTANCE_TYPE', defaultValue: 't2.micro', description: 'AWS instance type')
+        choice(name: 'INSTANCE_MODE', choices: ['General', 'Spot'], description: 'Instance type: General or Spot')
+        booleanParam(name: 'DISABLE_PUBLIC_IP', defaultValue: true, description: 'Disable public IP assignment')
+        string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID')
         string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group')
+        string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for instance status notification')
         booleanParam(name: 'BUILD_AWS', defaultValue: true, description: 'Build AWS AMI')
         booleanParam(name: 'BUILD_GCP', defaultValue: true, description: 'Build GCP Image')
         booleanParam(name: 'BUILD_AZURE', defaultValue: true, description: 'Build Azure Image')
@@ -44,7 +49,6 @@ pipeline {
         stage('Build Images') {
             steps {
                 script {
-                    def packerCmd = "${PACKER} build "
                     def vars = [
                         "-var \"image_name=${params.IMAGE_NAME}\"",
                         "-var \"region=${params.AWS_REGION}\"",
@@ -52,10 +56,9 @@ pipeline {
                         "-var \"gcp_zone=${params.GCP_ZONE}\"",
                         "-var \"azure_location=${params.AZURE_LOCATION}\"",
                         "-var \"azure_resource_group=${params.AZURE_RESOURCE_GROUP}\"",
-                        "-var \"azure_client_id=%ARM_CLIENT_ID%\"",
-                        "-var \"azure_client_secret=%ARM_CLIENT_SECRET%\"",
-                        "-var \"azure_subscription_id=${env.AZURE_SUBSCRIPTION_ID}\"",
-                        "-var \"azure_tenant_id=${env.AZURE_TENANT_ID}\""
+                        "-var \"image_type=${params.IMAGE_TYPE}\"",
+                        "-var \"instance_type=${params.INSTANCE_TYPE}\"",
+                        "-var \"disable_public_ip=${params.DISABLE_PUBLIC_IP}\""
                     ].join(" ")
 
                     def sources = []
@@ -70,22 +73,12 @@ pipeline {
                     def onlyFlag = "--only=${sources.join(',')}"
 
                     withCredentials([
-                        usernamePassword(
-                            credentialsId: 'aws-creds',
-                            usernameVariable: 'AWS_ACCESS_KEY_ID',
-                            passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                        ),
-                        file(
-                            credentialsId: 'gcp-key',
-                            variable: 'GOOGLE_APPLICATION_CREDENTIALS'
-                        ),
-                        usernamePassword(
-                            credentialsId: 'azure-creds',
-                            usernameVariable: 'ARM_CLIENT_ID',
-                            passwordVariable: 'ARM_CLIENT_SECRET'
-                        )
+                        usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
+                        file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
+                        usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
                     ]) {
                         bat """
+                        setlocal enabledelayedexpansion
                         set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
                         set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
                         set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
@@ -94,16 +87,16 @@ pipeline {
                         set ARM_SUBSCRIPTION_ID=${env.AZURE_SUBSCRIPTION_ID}
                         set ARM_TENANT_ID=${env.AZURE_TENANT_ID}
 
-                        REM Attempt Azure login if Azure CLI is available
                         where az >nul 2>&1
-                        if %ERRORLEVEL% equ 0 (
-                            az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant %ARM_TENANT_ID%
-                            az account set --subscription %ARM_SUBSCRIPTION_ID%
+                        if !ERRORLEVEL! equ 0 (
+                            echo Logging into Azure...
+                            az login --service-principal -u !ARM_CLIENT_ID! -p !ARM_CLIENT_SECRET! --tenant !ARM_TENANT_ID!
+                            az account set --subscription !ARM_SUBSCRIPTION_ID!
                         ) else (
-                            echo WARNING: Azure CLI not found. Skipping Azure login. Packer will use environment variables.
+                            echo Azure CLI not found. Using environment variables for Packer.
                         )
 
-                        ${PACKER} build ${onlyFlag} ${vars} ${PACKER_TEMPLATE}
+                        ${PACKER} build ${onlyFlag} ${vars} -var "azure_client_id=!ARM_CLIENT_ID!" -var "azure_client_secret=!ARM_CLIENT_SECRET!" -var "azure_subscription_id=!ARM_SUBSCRIPTION_ID!" -var "azure_tenant_id=!ARM_TENANT_ID!" ${PACKER_TEMPLATE}
                         exit /b 0
                         """
                     }
@@ -115,54 +108,61 @@ pipeline {
             steps {
                 script {
                     try {
-                        def manifest = readJSON file: 'manifest.json'
-                        echo "Manifest content: ${groovy.json.JsonOutput.toJson(manifest)}"
-
-                        def awsArtifact = manifest.builds.find { it.name == "amazon-ebs.aws" }
-                        def gcpArtifact = manifest.builds.find { it.name == "googlecompute.gcp" }
-                        def azureArtifact = manifest.builds.find { it.name == "azure-arm.azure" }
-
-                        env.AMI_ID = awsArtifact ? awsArtifact.artifact_id.split(":")[1] : null
-                        env.GCP_IMAGE = gcpArtifact ? gcpArtifact.artifact_id.split("/").last() : null
-                        env.AZURE_IMAGE = azureArtifact ? azureArtifact.artifact_id : null
-
-                        echo "AWS AMI ID: ${env.AMI_ID}"
-                        echo "GCP Image Name: ${env.GCP_IMAGE}"
-                        echo "Azure Image Name: ${env.AZURE_IMAGE}"
-
-                        if ((params.DEPLOY_AWS && !env.AMI_ID) ||
-                            (params.DEPLOY_GCP && !env.GCP_IMAGE) ||
-                            (params.DEPLOY_AZURE && !env.AZURE_IMAGE)) {
-                            error("Failed to extract required image IDs.")
+                        def manifestContent = readFile('manifest.json').trim()
+                        def manifest = readJSON text: manifestContent
+                        
+                        echo "=== Build Artifacts ==="
+                        if (manifest.builds) {
+                            manifest.builds.each { build ->
+                                echo "${build.name}: ${build.artifact_id}"
+                            }
                         }
+
+                        manifest.builds?.each { build ->
+                            if (build.name == "amazon-ebs.aws") {
+                                env.AMI_ID = build.artifact_id?.split(":")[1]
+                            } else if (build.name == "googlecompute.gcp") {
+                                env.GCP_IMAGE = build.artifact_id?.split("/")?.last()
+                            } else if (build.name == "azure-arm.azure") {
+                                env.AZURE_IMAGE = build.artifact_id
+                            }
+                        }
+                        
+                        echo "AWS: ${env.AMI_ID ?: 'N/A'}"
+                        echo "GCP: ${env.GCP_IMAGE ?: 'N/A'}"
+                        echo "Azure: ${env.AZURE_IMAGE ?: 'N/A'}"
                     } catch (Exception e) {
-                        echo "Note: manifest.json not found or parsing failed - some builds may have failed"
-                        echo "Error: ${e.message}"
+                        echo "Warning: Could not parse manifest - ${e.message}"
                     }
                 }
             }
         }
 
         stage('Deploy Instances') {
+            when { expression { params.DEPLOY_AWS || params.DEPLOY_GCP || params.DEPLOY_AZURE } }
             parallel {
                 stage('Deploy AWS EC2') {
                     when { expression { params.DEPLOY_AWS && env.AMI_ID } }
                     steps {
-                        withCredentials([
-                            usernamePassword(
-                                credentialsId: 'aws-creds',
-                                usernameVariable: 'AWS_ACCESS_KEY_ID',
-                                passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                            )
-                        ]) {
+                        withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
                             bat """
+                            setlocal enabledelayedexpansion
                             set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
                             set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
+                            
+                            set SPOT_FLAG=
+                            if "${params.INSTANCE_MODE}"=="Spot" set SPOT_FLAG=--instance-market-options MarketType=spot
+                            
+                            set NO_PIP=
+                            if "${params.DISABLE_PUBLIC_IP}"=="true" set NO_PIP=--no-associate-public-ip-address
+                            
                             aws ec2 run-instances ^
-                              --image-id %AMI_ID% ^
-                              --instance-type t2.micro ^
-                              --region %AWS_REGION% ^
-                              --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=%APP_NAME%},{Key=Environment,Value=%ENV%},{Key=Owner,Value=%OWNER%}]"
+                              --image-id ${env.AMI_ID} ^
+                              --instance-type ${params.INSTANCE_TYPE} ^
+                              --region ${params.AWS_REGION} ^
+                              !SPOT_FLAG! ^
+                              !NO_PIP! ^
+                              --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${APP_NAME}},{Key=Environment,Value=${ENV}}]"
                             """
                         }
                     }
@@ -171,20 +171,18 @@ pipeline {
                 stage('Deploy GCP VM') {
                     when { expression { params.DEPLOY_GCP && env.GCP_IMAGE } }
                     steps {
-                        withCredentials([
-                            file(
-                                credentialsId: 'gcp-key',
-                                variable: 'GOOGLE_APPLICATION_CREDENTIALS'
-                            )
-                        ]) {
+                        withCredentials([file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS')]) {
                             bat """
+                            setlocal enabledelayedexpansion
                             set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
-                            gcloud compute instances create ${APP_NAME}-vm ^
-                              --image=%GCP_IMAGE% ^
-                              --image-project=%GCP_PROJECT% ^
-                              --zone=%GCP_ZONE% ^
+                            
+                            gcloud compute instances create ${APP_NAME}-gcp ^
+                              --image=${env.GCP_IMAGE} ^
+                              --image-project=${params.GCP_PROJECT} ^
+                              --zone=${params.GCP_ZONE} ^
                               --machine-type=e2-micro ^
-                              --labels=app=%APP_NAME%,env=%ENV%,owner=%OWNER%
+                              --no-address ^
+                              --labels=app=${APP_NAME},env=${ENV}
                             """
                         }
                     }
@@ -193,29 +191,61 @@ pipeline {
                 stage('Deploy Azure VM') {
                     when { expression { params.DEPLOY_AZURE && env.AZURE_IMAGE } }
                     steps {
-                        withCredentials([
-                            usernamePassword(
-                                credentialsId: 'azure-creds',
-                                usernameVariable: 'ARM_CLIENT_ID',
-                                passwordVariable: 'ARM_CLIENT_SECRET'
-                            )
-                        ]) {
+                        withCredentials([usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')]) {
                             bat """
+                            setlocal enabledelayedexpansion
                             set ARM_CLIENT_ID=%ARM_CLIENT_ID%
                             set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
-                            set ARM_SUBSCRIPTION_ID=%AZURE_SUBSCRIPTION_ID%
-                            set ARM_TENANT_ID=%AZURE_TENANT_ID%
-
+                            set ARM_SUBSCRIPTION_ID=${env.AZURE_SUBSCRIPTION_ID}
+                            set ARM_TENANT_ID=${env.AZURE_TENANT_ID}
+                            
+                            az login --service-principal -u !ARM_CLIENT_ID! -p !ARM_CLIENT_SECRET! --tenant !ARM_TENANT_ID!
+                            az account set --subscription !ARM_SUBSCRIPTION_ID!
+                            
                             az vm create ^
-                              --name ${APP_NAME}-vm ^
-                              --image %AZURE_IMAGE% ^
-                              --resource-group %AZURE_RESOURCE_GROUP% ^
-                              --location %AZURE_LOCATION% ^
+                              --name ${APP_NAME}-azure ^
+                              --image ${env.AZURE_IMAGE} ^
+                              --resource-group ${params.AZURE_RESOURCE_GROUP} ^
+                              --location "${params.AZURE_LOCATION}" ^
                               --size Standard_B1s ^
-                              --tags app=%APP_NAME% env=%ENV% owner=%OWNER%
+                              --tags app=${APP_NAME} env=${ENV}
                             """
                         }
                     }
+                }
+            }
+        }
+
+        stage('Send Notification') {
+            steps {
+                script {
+                    def status = currentBuild.result == 'SUCCESS' ? '✅ SUCCESS' : '❌ FAILED'
+                    def emailBody = """
+                    Multi-Cloud Packer Build & Deployment Report
+                    ================================================
+                    
+                    Build Status: ${status}
+                    Build Number: ${BUILD_NUMBER}
+                    Image Type: ${params.IMAGE_TYPE}
+                    Instance Mode: ${params.INSTANCE_MODE}
+                    Public IP: ${params.DISABLE_PUBLIC_IP ? 'Disabled' : 'Enabled'}
+                    
+                    Build Artifacts:
+                    - AWS AMI: ${env.AMI_ID ?: 'Failed'}
+                    - GCP Image: ${env.GCP_IMAGE ?: 'Failed'}
+                    - Azure Image: ${env.AZURE_IMAGE ?: 'Failed'}
+                    
+                    Jenkins Job: ${BUILD_URL}
+                    
+                    This is an automated notification.
+                    """
+                    
+                    emailext(
+                        subject: "Multi-Cloud Packer Report - Build ${BUILD_NUMBER}",
+                        body: emailBody,
+                        to: "${params.EMAIL}",
+                        mimeType: 'text/plain'
+                    )
                 }
             }
         }
@@ -223,13 +253,7 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: 'manifest.json', fingerprint: true
-        }
-        success {
-            echo "✅ Pipeline succeeded!"
-        }
-        failure {
-            echo "❌ Pipeline failed!"
+            archiveArtifacts artifacts: 'manifest.json', allowEmptyArchive: true, fingerprint: true
         }
     }
 }
