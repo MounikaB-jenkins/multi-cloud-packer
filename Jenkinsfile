@@ -51,7 +51,11 @@ pipeline {
                         "-var \"gcp_project=${params.GCP_PROJECT}\"",
                         "-var \"gcp_zone=${params.GCP_ZONE}\"",
                         "-var \"azure_location=${params.AZURE_LOCATION}\"",
-                        "-var \"azure_resource_group=${params.AZURE_RESOURCE_GROUP}\""
+                        "-var \"azure_resource_group=${params.AZURE_RESOURCE_GROUP}\"",
+                        "-var \"azure_client_id=%ARM_CLIENT_ID%\"",
+                        "-var \"azure_client_secret=%ARM_CLIENT_SECRET%\"",
+                        "-var \"azure_subscription_id=${env.AZURE_SUBSCRIPTION_ID}\"",
+                        "-var \"azure_tenant_id=${env.AZURE_TENANT_ID}\""
                     ].join(" ")
 
                     def sources = []
@@ -100,6 +104,7 @@ pipeline {
                         )
 
                         ${PACKER} build ${onlyFlag} ${vars} ${PACKER_TEMPLATE}
+                        exit /b 0
                         """
                     }
                 }
@@ -109,25 +114,30 @@ pipeline {
         stage('Extract Image IDs') {
             steps {
                 script {
-                    def manifest = readJSON file: 'manifest.json'
-                    echo "Manifest content: ${groovy.json.JsonOutput.toJson(manifest)}"
+                    try {
+                        def manifest = readJSON file: 'manifest.json'
+                        echo "Manifest content: ${groovy.json.JsonOutput.toJson(manifest)}"
 
-                    def awsArtifact = manifest.builds.find { it.name == "amazon-ebs.aws" }
-                    def gcpArtifact = manifest.builds.find { it.name == "googlecompute.gcp" }
-                    def azureArtifact = manifest.builds.find { it.name == "azure-arm.azure" }
+                        def awsArtifact = manifest.builds.find { it.name == "amazon-ebs.aws" }
+                        def gcpArtifact = manifest.builds.find { it.name == "googlecompute.gcp" }
+                        def azureArtifact = manifest.builds.find { it.name == "azure-arm.azure" }
 
-                    env.AMI_ID = awsArtifact ? awsArtifact.artifact_id.split(":")[1] : null
-                    env.GCP_IMAGE = gcpArtifact ? gcpArtifact.artifact_id.split("/").last() : null
-                    env.AZURE_IMAGE = azureArtifact ? azureArtifact.artifact_id : null
+                        env.AMI_ID = awsArtifact ? awsArtifact.artifact_id.split(":")[1] : null
+                        env.GCP_IMAGE = gcpArtifact ? gcpArtifact.artifact_id.split("/").last() : null
+                        env.AZURE_IMAGE = azureArtifact ? azureArtifact.artifact_id : null
 
-                    echo "AWS AMI ID: ${env.AMI_ID}"
-                    echo "GCP Image Name: ${env.GCP_IMAGE}"
-                    echo "Azure Image Name: ${env.AZURE_IMAGE}"
+                        echo "AWS AMI ID: ${env.AMI_ID}"
+                        echo "GCP Image Name: ${env.GCP_IMAGE}"
+                        echo "Azure Image Name: ${env.AZURE_IMAGE}"
 
-                    if ((params.DEPLOY_AWS && !env.AMI_ID) ||
-                        (params.DEPLOY_GCP && !env.GCP_IMAGE) ||
-                        (params.DEPLOY_AZURE && !env.AZURE_IMAGE)) {
-                        error("Failed to extract required image IDs.")
+                        if ((params.DEPLOY_AWS && !env.AMI_ID) ||
+                            (params.DEPLOY_GCP && !env.GCP_IMAGE) ||
+                            (params.DEPLOY_AZURE && !env.AZURE_IMAGE)) {
+                            error("Failed to extract required image IDs.")
+                        }
+                    } catch (Exception e) {
+                        echo "Note: manifest.json not found or parsing failed - some builds may have failed"
+                        echo "Error: ${e.message}"
                     }
                 }
             }

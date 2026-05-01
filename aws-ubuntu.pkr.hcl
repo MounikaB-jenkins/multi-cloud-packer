@@ -44,6 +44,23 @@ variable "azure_location" {
   default = "East US"
 }
 
+variable "azure_client_id" {
+  default = ""
+}
+
+variable "azure_client_secret" {
+  default = ""
+  sensitive = true
+}
+
+variable "azure_subscription_id" {
+  default = ""
+}
+
+variable "azure_tenant_id" {
+  default = ""
+}
+
 # ---------------- AWS (UBUNTU) ----------------
 source "amazon-ebs" "aws" {
   region        = var.region
@@ -95,7 +112,12 @@ source "googlecompute" "gcp" {
 
 # ---------------- AZURE (UBUNTU) ----------------
 source "azure-arm" "azure" {
-  use_azure_cli_auth = true
+  use_azure_cli_auth = false
+  
+  client_id       = var.azure_client_id
+  client_secret   = var.azure_client_secret
+  subscription_id = var.azure_subscription_id
+  tenant_id       = var.azure_tenant_id
 
   os_type         = "Linux"
   image_publisher = "Canonical"
