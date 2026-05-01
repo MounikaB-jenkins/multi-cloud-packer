@@ -1,4 +1,4 @@
-def PACKER = '"C:\\Users\\vresh\\Desktop\\TrainingFiles_Srikanthmentor\\multi-cloud-packer\\packer.exe"'
+def PACKER = 'packer'
 
 pipeline {
     agent any
