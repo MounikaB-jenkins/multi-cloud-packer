@@ -63,7 +63,7 @@ pipeline {
                         error("No cloud providers selected for build.")
                     }
 
-                    def onlyFlag = sources.collect { "--only=${it}" }.join(" ")
+                    def onlyFlag = "--only=${sources.join(',')}"
 
                     withCredentials([
                         usernamePassword(
