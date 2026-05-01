@@ -1,4 +1,4 @@
-def PACKER = 'packer'
+def PACKER = '"C:\\DevopsProject\\packer.exe"'
 
 pipeline {
     agent any
