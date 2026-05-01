@@ -49,8 +49,6 @@ pipeline {
                         "-var 'image_name=${params.IMAGE_NAME}'",
                         "-var 'region=${params.AWS_REGION}'",
                         "-var 'gcp_project=${params.GCP_PROJECT}'",
-                        "-var 'gcp_zone=${params.GCP_ZONE}'",
-                        "-var 'azure_location=${params.AZURE_LOCATION}'",
                         "-var 'azure_resource_group=${params.AZURE_RESOURCE_GROUP}'"
                     ].join(" ")
 
