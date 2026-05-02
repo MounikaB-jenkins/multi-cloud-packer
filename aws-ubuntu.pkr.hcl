@@ -47,7 +47,7 @@ variable "image_type" {
 
 variable "disable_public_ip" {
   type    = bool
-  default = true
+  default = false
   description = "Disable public IP in deployments"
 }
 
@@ -142,6 +142,7 @@ source "googlecompute" "gcp_linux" {
   ssh_username      = "ubuntu"
   image_name        = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
   omit_external_ip  = var.disable_public_ip
+  use_internal_ip   = var.disable_public_ip
 
   image_labels = {
     name        = var.image_name
@@ -219,6 +220,7 @@ source "googlecompute" "gcp_windows" {
   winrm_username    = "packer_user"
   image_name        = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
   omit_external_ip  = var.disable_public_ip
+  use_internal_ip   = var.disable_public_ip
 
   image_labels = {
     name        = var.image_name
