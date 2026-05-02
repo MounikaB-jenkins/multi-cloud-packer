@@ -14,6 +14,8 @@ pipeline {
         booleanParam(name: 'DISABLE_PUBLIC_IP', defaultValue: false, description: 'Disable public IP assignment')
         string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID')
         string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group')
+        string(name: 'AZURE_SUBSCRIPTION_ID', defaultValue: '', description: 'Azure subscription ID')
+        string(name: 'AZURE_TENANT_ID', defaultValue: '', description: 'Azure tenant ID')
         string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for instance status notification')
         booleanParam(name: 'BUILD_AWS', defaultValue: true, description: 'Build AWS AMI')
         booleanParam(name: 'BUILD_GCP', defaultValue: true, description: 'Build GCP Image')
@@ -57,6 +59,8 @@ pipeline {
                         "-var \"gcp_zone=${params.GCP_ZONE}\"",
                         "-var \"azure_location=${params.AZURE_LOCATION}\"",
                         "-var \"azure_resource_group=${params.AZURE_RESOURCE_GROUP}\"",
+                        "-var \"azure_subscription_id=${params.AZURE_SUBSCRIPTION_ID}\"",
+                        "-var \"azure_tenant_id=${params.AZURE_TENANT_ID}\"",
                         "-var \"image_type=${params.IMAGE_TYPE}\"",
                         "-var \"instance_type=${params.INSTANCE_TYPE}\"",
                         "-var \"disable_public_ip=${params.DISABLE_PUBLIC_IP}\""
