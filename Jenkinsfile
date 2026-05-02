@@ -11,7 +11,7 @@ pipeline {
         string(name: 'AZURE_LOCATION', defaultValue: 'East US', description: 'Azure region')
         string(name: 'INSTANCE_TYPE', defaultValue: 't2.micro', description: 'AWS instance type')
         choice(name: 'INSTANCE_MODE', choices: ['General', 'Spot'], description: 'Instance type: General or Spot')
-        booleanParam(name: 'DISABLE_PUBLIC_IP', defaultValue: true, description: 'Disable public IP assignment')
+        booleanParam(name: 'DISABLE_PUBLIC_IP', defaultValue: false, description: 'Disable public IP assignment')
         string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID')
         string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group')
         string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for instance status notification')
@@ -33,6 +33,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
+                deleteDir()
                 git branch: 'main',
                       credentialsId: 'github-token',
                       url: 'https://github.com/MounikaB-jenkins/multi-cloud-packer.git'
