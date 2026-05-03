@@ -31,6 +31,8 @@ pipeline {
         APP_NAME = 'multi-cloud-nginx'
         ENV = 'dev'
         OWNER = 'jenkins'
+        AZURE_SUBSCRIPTION_ID = "${params.AZURE_SUBSCRIPTION_ID}"
+        AZURE_TENANT_ID = "${params.AZURE_TENANT_ID}"
     }
 
     stages {
