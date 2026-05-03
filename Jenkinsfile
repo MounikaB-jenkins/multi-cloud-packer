@@ -10,6 +10,7 @@ pipeline {
         string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone')
         string(name: 'AZURE_LOCATION', defaultValue: 'West US 2', description: 'Azure region')
         string(name: 'INSTANCE_TYPE', defaultValue: 't2.micro', description: 'AWS instance type')
+        string(name: 'INSTANCE_TYPE', defaultValue: 't2.micro', description: 'AWS instance type')
         choice(name: 'INSTANCE_MODE', choices: ['General', 'Spot'], description: 'Instance type: General or Spot')
         booleanParam(name: 'DISABLE_PUBLIC_IP', defaultValue: false, description: 'Disable public IP assignment')
         string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID')
