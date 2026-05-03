@@ -166,7 +166,7 @@ source "azure-arm" "azure_linux" {
   image_sku       = "22_04-lts"
   
   location = var.azure_location
-  vm_size  = "Standard_B1s"
+  vm_size  = "Standard_B2ats_v2"
 
   managed_image_resource_group_name = var.azure_resource_group
   managed_image_name                = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
