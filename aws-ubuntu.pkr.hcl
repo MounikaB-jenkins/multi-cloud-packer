@@ -71,7 +71,7 @@ variable "azure_resource_group" {
 
 variable "azure_location" {
   type    = string
-  default = "West US 2"
+  default = "West Europe"
   description = "Azure location"
 }
 

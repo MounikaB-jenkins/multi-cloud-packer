@@ -8,7 +8,7 @@ pipeline {
         choice(name: 'IMAGE_TYPE', choices: ['Linux', 'Windows'], description: 'Operating system type')
         string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region')
         string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone')
-        string(name: 'AZURE_LOCATION', defaultValue: 'West US 2', description: 'Azure region')
+        string(name: 'AZURE_LOCATION', defaultValue: 'West Europe', description: 'Azure region')
         string(name: 'INSTANCE_TYPE', defaultValue: 't2.micro', description: 'AWS instance type')
         string(name: 'INSTANCE_TYPE', defaultValue: 't2.micro', description: 'AWS instance type')
         choice(name: 'INSTANCE_MODE', choices: ['General', 'Spot'], description: 'Instance type: General or Spot')
