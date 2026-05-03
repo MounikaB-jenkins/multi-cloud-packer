@@ -94,8 +94,8 @@ pipeline {
                         set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
                         set ARM_CLIENT_ID=%ARM_CLIENT_ID%
                         set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
-                        set ARM_SUBSCRIPTION_ID=${env.AZURE_SUBSCRIPTION_ID}
-                        set ARM_TENANT_ID=${env.AZURE_TENANT_ID}
+                        set ARM_SUBSCRIPTION_ID=${params.AZURE_SUBSCRIPTION_ID}
+                        set ARM_TENANT_ID=${params.AZURE_TENANT_ID}
 
                         where az >nul 2>&1
                         if !ERRORLEVEL! equ 0 (
@@ -205,8 +205,8 @@ pipeline {
                             setlocal enabledelayedexpansion
                             set ARM_CLIENT_ID=%ARM_CLIENT_ID%
                             set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
-                            set ARM_SUBSCRIPTION_ID=${env.AZURE_SUBSCRIPTION_ID}
-                            set ARM_TENANT_ID=${env.AZURE_TENANT_ID}
+                            set ARM_SUBSCRIPTION_ID=${params.AZURE_SUBSCRIPTION_ID}
+                            set ARM_TENANT_ID=${params.AZURE_TENANT_ID}
                             
                             az login --service-principal -u !ARM_CLIENT_ID! -p !ARM_CLIENT_SECRET! --tenant !ARM_TENANT_ID!
                             az account set --subscription !ARM_SUBSCRIPTION_ID!
