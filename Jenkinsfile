@@ -128,12 +128,12 @@ pipeline {
                         )
 
                         echo Running Packer build...
-                        echo Command: ${PACKER} build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
+                        echo Command: ${PACKER} build ${onlyFlag} ${vars} ${PACKER_TEMPLATE}
                         echo Environment variables:
                         echo ARM_CLIENT_ID=%ARM_CLIENT_ID%
                         echo ARM_SUBSCRIPTION_ID=%ARM_SUBSCRIPTION_ID%
                         echo ARM_TENANT_ID=%ARM_TENANT_ID%
-                        ${PACKER} build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
+                        ${PACKER} build ${onlyFlag} ${vars} ${PACKER_TEMPLATE}
                         if %ERRORLEVEL% neq 0 (
                             echo Packer build failed with exit code %ERRORLEVEL%
                             exit /b %ERRORLEVEL%

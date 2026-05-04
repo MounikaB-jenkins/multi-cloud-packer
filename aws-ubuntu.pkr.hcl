@@ -153,13 +153,8 @@ source "googlecompute" "gcp_linux" {
 }
 
 source "azure-arm" "azure_linux" {
-  use_azure_cli_auth = false
+  use_azure_cli_auth = true
   
-  client_id       = var.azure_client_id
-  client_secret   = var.azure_client_secret
-  subscription_id = var.azure_subscription_id
-  tenant_id       = var.azure_tenant_id
-
   os_type         = "Linux"
   image_publisher = "Canonical"
   image_offer     = "0001-com-ubuntu-server-jammy"
@@ -231,13 +226,8 @@ source "googlecompute" "gcp_windows" {
 }
 
 source "azure-arm" "azure_windows" {
-  use_azure_cli_auth = false
+  use_azure_cli_auth = true
   
-  client_id       = var.azure_client_id
-  client_secret   = var.azure_client_secret
-  subscription_id = var.azure_subscription_id
-  tenant_id       = var.azure_tenant_id
-
   os_type         = "Windows"
   image_publisher = "MicrosoftWindowsServer"
   image_offer     = "WindowsServer"
