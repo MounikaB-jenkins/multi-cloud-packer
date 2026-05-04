@@ -107,7 +107,6 @@ pipeline {
                         )
 
                         ${PACKER} build ${onlyFlag} ${vars} -var "azure_client_id=!ARM_CLIENT_ID!" -var "azure_client_secret=!ARM_CLIENT_SECRET!" -var "azure_subscription_id=!ARM_SUBSCRIPTION_ID!" -var "azure_tenant_id=!ARM_TENANT_ID!" ${PACKER_TEMPLATE}
-                        exit /b 0
                         """
                     }
                 }
@@ -118,6 +117,10 @@ pipeline {
             steps {
                 script {
                     try {
+                        if (!fileExists('manifest.json')) {
+                            error('manifest.json not found; build likely failed before artifact creation.')
+                        }
+
                         def manifestContent = readFile('manifest.json').trim()
                         def manifest = readJSON text: manifestContent
                         
@@ -142,6 +145,7 @@ pipeline {
                         }
                     } catch (Exception e) {
                         echo "Warning: Could not parse manifest - ${e.message}"
+                        error('Manifest extraction failed, stopping pipeline to avoid skipped deploy stages.')
                     }
                 }
             }
