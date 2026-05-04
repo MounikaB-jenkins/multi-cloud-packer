@@ -1,4 +1,4 @@
-def PACKER = '"C:\\DevopsProject\\packer.exe"'
+def PACKER = 'C:\\DevopsProject\\packer.exe'
 
 pipeline {
     agent any
@@ -9,7 +9,6 @@ pipeline {
         string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region')
         string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone')
         string(name: 'AZURE_LOCATION', defaultValue: 'West Europe', description: 'Azure region')
-        string(name: 'INSTANCE_TYPE', defaultValue: 't2.micro', description: 'AWS instance type')
         string(name: 'INSTANCE_TYPE', defaultValue: 't2.micro', description: 'AWS instance type')
         choice(name: 'INSTANCE_MODE', choices: ['General', 'Spot'], description: 'Instance type: General or Spot')
         booleanParam(name: 'DISABLE_PUBLIC_IP', defaultValue: false, description: 'Disable public IP assignment')
@@ -81,6 +80,7 @@ pipeline {
                     }
 
                     def onlyFlag = "--only=${sources.join(',')}"
+                    echo "Packer only targets: ${onlyFlag}"
 
                     withCredentials([
                         usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
@@ -88,7 +88,6 @@ pipeline {
                         usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
                     ]) {
                         bat """
-                        setlocal enabledelayedexpansion
                         set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
                         set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
                         set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
@@ -98,21 +97,62 @@ pipeline {
                         set ARM_TENANT_ID=${params.AZURE_TENANT_ID}
 
                         where az >nul 2>&1
-                        if !ERRORLEVEL! equ 0 (
+                        if %ERRORLEVEL% equ 0 (
                             echo Logging into Azure...
-                            az login --service-principal -u !ARM_CLIENT_ID! -p !ARM_CLIENT_SECRET! --tenant ${params.AZURE_TENANT_ID}
-                            az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                            az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant %ARM_TENANT_ID%
+                            az account set --subscription %ARM_SUBSCRIPTION_ID%
                         ) else (
                             echo Azure CLI not found. Using environment variables for Packer.
                         )
+                        """
 
-                        ${PACKER} build ${onlyFlag} ${vars} -var "azure_client_id=!ARM_CLIENT_ID!" -var "azure_client_secret=!ARM_CLIENT_SECRET!" -var "azure_subscription_id=!ARM_SUBSCRIPTION_ID!" -var "azure_tenant_id=!ARM_TENANT_ID!" ${PACKER_TEMPLATE}
+                        bat """
+                        set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
+                        set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
+                        set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
+                        set ARM_CLIENT_ID=%ARM_CLIENT_ID%
+                        set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
+                        set ARM_SUBSCRIPTION_ID=${params.AZURE_SUBSCRIPTION_ID}
+                        set ARM_TENANT_ID=${params.AZURE_TENANT_ID}
+
+                        echo Running Packer build...
+                        echo Command: ${PACKER} build ${onlyFlag} ${vars} ${PACKER_TEMPLATE}
+                        echo Environment variables:
+                        echo ARM_CLIENT_ID=%ARM_CLIENT_ID%
+                        echo ARM_SUBSCRIPTION_ID=%ARM_SUBSCRIPTION_ID%
+                        echo ARM_TENANT_ID=%ARM_TENANT_ID%
+                        echo Testing Packer template...
+                        if exist ${PACKER_TEMPLATE} (
+                            echo Packer template found
+                        ) else (
+                            echo Packer template not found: ${PACKER_TEMPLATE}
+                            dir /b
+                            exit /b 1
+                        )
+                        ${PACKER} --version
+                        if %ERRORLEVEL% neq 0 (
+                            echo Packer executable test failed
+                            exit /b %ERRORLEVEL%
+                        )
+                        ${PACKER} build ${onlyFlag} ${vars} ${PACKER_TEMPLATE}
+                        if %ERRORLEVEL% neq 0 (
+                            echo Packer build failed with exit code %ERRORLEVEL%
+                            exit /b %ERRORLEVEL%
+                        )
+
+                        echo Listing workspace after Packer build...
+                        dir /b
+                        dir /s manifest.json || echo manifest.json not found in workspace tree
+
                         if exist manifest.json (
                             echo manifest.json created
                         ) else (
                             echo manifest.json missing after build
+                            exit /b 1
                         )
                         """
+
+                        stash includes: 'manifest.json', name: 'packer-manifest'
                     }
                 }
             }
@@ -121,6 +161,7 @@ pipeline {
         stage('Extract Image IDs') {
             steps {
                 script {
+                    unstash 'packer-manifest'
                     bat 'echo Current workspace: %cd% && dir /b'
                     try {
                         if (!fileExists('manifest.json')) {

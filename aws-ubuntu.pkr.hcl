@@ -265,12 +265,12 @@ source "azure-arm" "azure_windows" {
 # ==================== BUILD BLOCK ====================
 build {
   sources = [
-    "source.amazon-ebs.aws_linux",
-    "source.googlecompute.gcp_linux",
-    "source.azure-arm.azure_linux",
-    "source.amazon-ebs.aws_windows",
-    "source.googlecompute.gcp_windows",
-    "source.azure-arm.azure_windows"
+    "amazon-ebs.aws_linux",
+    "googlecompute.gcp_linux",
+    "azure-arm.azure_linux",
+    "amazon-ebs.aws_windows",
+    "googlecompute.gcp_windows",
+    "azure-arm.azure_windows"
   ]
 
   # Linux provisioners
