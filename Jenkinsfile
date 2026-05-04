@@ -107,6 +107,11 @@ pipeline {
                         )
 
                         ${PACKER} build ${onlyFlag} ${vars} -var "azure_client_id=!ARM_CLIENT_ID!" -var "azure_client_secret=!ARM_CLIENT_SECRET!" -var "azure_subscription_id=!ARM_SUBSCRIPTION_ID!" -var "azure_tenant_id=!ARM_TENANT_ID!" ${PACKER_TEMPLATE}
+                        if exist manifest.json (
+                            echo manifest.json created
+                        ) else (
+                            echo manifest.json missing after build
+                        )
                         """
                     }
                 }
@@ -116,6 +121,7 @@ pipeline {
         stage('Extract Image IDs') {
             steps {
                 script {
+                    bat 'echo Current workspace: %cd% && dir /b'
                     try {
                         if (!fileExists('manifest.json')) {
                             error('manifest.json not found; build likely failed before artifact creation.')
