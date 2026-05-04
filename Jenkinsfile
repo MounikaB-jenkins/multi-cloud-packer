@@ -103,6 +103,7 @@ pipeline {
                             echo ERROR: Packer executable not found at C:\\DevopsProject\\packer.exe
                             exit /b 1
                         )
+                        setlocal enabledelayedexpansion
                         set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
                         set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
                         set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
@@ -111,17 +112,11 @@ pipeline {
                         set ARM_SUBSCRIPTION_ID=${params.AZURE_SUBSCRIPTION_ID}
                         set ARM_TENANT_ID=${params.AZURE_TENANT_ID}
 
-                        where az >nul 2>&1
-                        if %ERRORLEVEL% equ 0 (
-                            echo Logging into Azure...
-                            az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant %ARM_TENANT_ID%
-                            az account set --subscription %ARM_SUBSCRIPTION_ID%
-                        ) else (
-                            echo Azure CLI not found. Using environment variables for Packer.
-                        )
+                        echo Current workspace: %cd%
+                        dir /b
 
                         echo Testing Packer template...
-                        if exist ${PACKER_TEMPLATE} (
+                        if exist "${PACKER_TEMPLATE}" (
                             echo Packer template found
                         ) else (
                             echo Packer template not found: ${PACKER_TEMPLATE}
@@ -158,7 +153,7 @@ pipeline {
                         dir /b
                         dir /s manifest.json || echo manifest.json not found in workspace tree
 
-                        if exist manifest.json (
+                        if exist "manifest.json" (
                             echo manifest.json created
                         ) else (
                             echo manifest.json missing after build
