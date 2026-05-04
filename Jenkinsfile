@@ -46,8 +46,9 @@ pipeline {
 
         stage('Init & Validate') {
             steps {
-                bat "${PACKER} init ."
-                bat "${PACKER} validate ${PACKER_TEMPLATE}"
+                bat 'copy "C:\\DevopsProject\\packer.exe" .\\packer.exe'
+                bat "packer.exe init ."
+                bat "packer.exe validate ${PACKER_TEMPLATE}"
             }
         }
 
@@ -88,6 +89,13 @@ pipeline {
                         usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
                     ]) {
                         bat """
+                        echo Copying Packer executable to workspace...
+                        copy "C:\\DevopsProject\\packer.exe" .\\packer.exe
+                        if %ERRORLEVEL% neq 0 (
+                            echo Failed to copy packer executable
+                            exit /b 1
+                        )
+                        bat """
                         set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
                         set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
                         set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
@@ -114,26 +122,26 @@ pipeline {
                             exit /b 1
                         )
                         echo Testing Packer executable...
-                        if exist ${PACKER} (
+                        if exist packer.exe (
                             echo Packer executable found
                         ) else (
-                            echo Packer executable not found at ${PACKER}
+                            echo Packer executable not found
                             exit /b 1
                         )
                         echo Testing Packer executable...
-                        ${PACKER} --version
+                        packer.exe --version
                         if %ERRORLEVEL% neq 0 (
                             echo Packer executable test failed
                             exit /b %ERRORLEVEL%
                         )
 
                         echo Running Packer build...
-                        echo Command: ${PACKER} build ${onlyFlag} ${vars} ${PACKER_TEMPLATE}
+                        echo Command: packer.exe build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
                         echo Environment variables:
                         echo ARM_CLIENT_ID=%ARM_CLIENT_ID%
                         echo ARM_SUBSCRIPTION_ID=%ARM_SUBSCRIPTION_ID%
                         echo ARM_TENANT_ID=%ARM_TENANT_ID%
-                        ${PACKER} build ${onlyFlag} ${vars} ${PACKER_TEMPLATE}
+                        packer.exe build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
                         if %ERRORLEVEL% neq 0 (
                             echo Packer build failed with exit code %ERRORLEVEL%
                             exit /b %ERRORLEVEL%
