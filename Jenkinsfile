@@ -104,23 +104,7 @@ pipeline {
                         ) else (
                             echo Azure CLI not found. Using environment variables for Packer.
                         )
-                        """
 
-                        bat """
-                        set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
-                        set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
-                        set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
-                        set ARM_CLIENT_ID=%ARM_CLIENT_ID%
-                        set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
-                        set ARM_SUBSCRIPTION_ID=${params.AZURE_SUBSCRIPTION_ID}
-                        set ARM_TENANT_ID=${params.AZURE_TENANT_ID}
-
-                        echo Running Packer build...
-                        echo Command: ${PACKER} build ${onlyFlag} ${vars} ${PACKER_TEMPLATE}
-                        echo Environment variables:
-                        echo ARM_CLIENT_ID=%ARM_CLIENT_ID%
-                        echo ARM_SUBSCRIPTION_ID=%ARM_SUBSCRIPTION_ID%
-                        echo ARM_TENANT_ID=%ARM_TENANT_ID%
                         echo Testing Packer template...
                         if exist ${PACKER_TEMPLATE} (
                             echo Packer template found
@@ -129,12 +113,27 @@ pipeline {
                             dir /b
                             exit /b 1
                         )
+                        echo Testing Packer executable...
+                        if exist ${PACKER} (
+                            echo Packer executable found
+                        ) else (
+                            echo Packer executable not found at ${PACKER}
+                            exit /b 1
+                        )
+                        echo Testing Packer executable...
                         ${PACKER} --version
                         if %ERRORLEVEL% neq 0 (
                             echo Packer executable test failed
                             exit /b %ERRORLEVEL%
                         )
-                        ${PACKER} build ${onlyFlag} ${vars} ${PACKER_TEMPLATE}
+
+                        echo Running Packer build...
+                        echo Command: ${PACKER} build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
+                        echo Environment variables:
+                        echo ARM_CLIENT_ID=%ARM_CLIENT_ID%
+                        echo ARM_SUBSCRIPTION_ID=%ARM_SUBSCRIPTION_ID%
+                        echo ARM_TENANT_ID=%ARM_TENANT_ID%
+                        ${PACKER} build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
                         if %ERRORLEVEL% neq 0 (
                             echo Packer build failed with exit code %ERRORLEVEL%
                             exit /b %ERRORLEVEL%
