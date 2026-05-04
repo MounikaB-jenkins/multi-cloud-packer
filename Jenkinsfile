@@ -100,8 +100,8 @@ pipeline {
                         where az >nul 2>&1
                         if !ERRORLEVEL! equ 0 (
                             echo Logging into Azure...
-                            az login --service-principal -u !ARM_CLIENT_ID! -p !ARM_CLIENT_SECRET! --tenant !ARM_TENANT_ID!
-                            az account set --subscription !ARM_SUBSCRIPTION_ID!
+                            az login --service-principal -u !ARM_CLIENT_ID! -p !ARM_CLIENT_SECRET! --tenant ${params.AZURE_TENANT_ID}
+                            az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
                         ) else (
                             echo Azure CLI not found. Using environment variables for Packer.
                         )
@@ -208,8 +208,8 @@ pipeline {
                             set ARM_SUBSCRIPTION_ID=${params.AZURE_SUBSCRIPTION_ID}
                             set ARM_TENANT_ID=${params.AZURE_TENANT_ID}
                             
-                            az login --service-principal -u !ARM_CLIENT_ID! -p !ARM_CLIENT_SECRET! --tenant !ARM_TENANT_ID!
-                            az account set --subscription !ARM_SUBSCRIPTION_ID!
+                            az login --service-principal -u !ARM_CLIENT_ID! -p !ARM_CLIENT_SECRET! --tenant ${params.AZURE_TENANT_ID}
+                            az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
                             
                             az vm create ^
                               --name ${APP_NAME}-azure ^
