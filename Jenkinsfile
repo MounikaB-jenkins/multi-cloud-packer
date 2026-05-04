@@ -46,9 +46,16 @@ pipeline {
 
         stage('Init & Validate') {
             steps {
-                bat 'copy "C:\\DevopsProject\\packer.exe" .\\packer.exe'
-                bat "packer.exe init ."
-                bat "packer.exe validate ${PACKER_TEMPLATE}"
+                bat """
+                if exist "C:\\DevopsProject\\packer.exe" (
+                    copy /Y "C:\\DevopsProject\\packer.exe" .\\packer.exe
+                ) else (
+                    echo ERROR: Packer executable not found at C:\\DevopsProject\\packer.exe
+                    exit /b 1
+                )
+                packer.exe init .
+                packer.exe validate ${PACKER_TEMPLATE}
+                """
             }
         }
 
@@ -90,9 +97,10 @@ pipeline {
                     ]) {
                         bat """
                         echo Copying Packer executable to workspace...
-                        copy "C:\\DevopsProject\\packer.exe" .\\packer.exe
-                        if %ERRORLEVEL% neq 0 (
-                            echo Failed to copy packer executable
+                        if exist "C:\\DevopsProject\\packer.exe" (
+                            copy /Y "C:\\DevopsProject\\packer.exe" .\\packer.exe
+                        ) else (
+                            echo ERROR: Packer executable not found at C:\\DevopsProject\\packer.exe
                             exit /b 1
                         )
                         set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
