@@ -7,6 +7,7 @@ pipeline {
         string(name: 'IMAGE_NAME', defaultValue: 'multi-cloud-ubuntu', description: 'Name for the Packer image')
         choice(name: 'IMAGE_TYPE', choices: ['Linux', 'Windows'], description: 'Operating system type')
         string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region')
+        string(name: 'AWS_KEY_NAME', defaultValue: 'my-aws-key', description: 'Existing AWS Key Pair name')
         string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone')
         string(name: 'AZURE_LOCATION', defaultValue: 'West Europe', description: 'Azure region')
         string(name: 'INSTANCE_TYPE', defaultValue: 't2.micro', description: 'AWS instance type')
@@ -65,6 +66,7 @@ pipeline {
                     def vars = [
                         "-var \"image_name=${params.IMAGE_NAME}\"",
                         "-var \"region=${params.AWS_REGION}\"",
+                        "-var \"aws_key_name=${params.AWS_KEY_NAME}\"",
                         "-var \"gcp_project=${params.GCP_PROJECT}\"",
                         "-var \"gcp_zone=${params.GCP_ZONE}\"",
                         "-var \"azure_location=${params.AZURE_LOCATION}\"",
@@ -229,6 +231,7 @@ pipeline {
                               --image-id ${env.AMI_ID} ^
                               --instance-type ${params.INSTANCE_TYPE} ^
                               --region ${params.AWS_REGION} ^
+                              --key-name ${params.AWS_KEY_NAME} ^
                               !SPOT_FLAG! ^
                               !NO_PIP! ^
                               --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${APP_NAME}},{Key=Environment,Value=${ENV}}]"

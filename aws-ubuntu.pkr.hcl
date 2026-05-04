@@ -51,6 +51,12 @@ variable "disable_public_ip" {
   description = "Disable public IP in deployments"
 }
 
+variable "aws_key_name" {
+  type    = string
+  default = ""
+  description = "Existing AWS keypair name for build instance"
+}
+
 variable "gcp_project" {
   type    = string
   default = "packer-demo-456789"
@@ -108,6 +114,7 @@ source "amazon-ebs" "aws_linux" {
   region            = var.region
   instance_type     = var.instance_type
   associate_public_ip_address = !var.disable_public_ip
+  ssh_keypair_name  = var.aws_key_name
 
   source_ami_filter {
     filters = {
@@ -184,6 +191,7 @@ source "amazon-ebs" "aws_windows" {
   region            = var.region
   instance_type     = var.instance_type
   associate_public_ip_address = !var.disable_public_ip
+  ssh_keypair_name  = var.aws_key_name
 
   source_ami_filter {
     filters = {
