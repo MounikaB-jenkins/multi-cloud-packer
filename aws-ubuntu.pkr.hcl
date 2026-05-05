@@ -57,6 +57,12 @@ variable "aws_key_name" {
   description = "Existing AWS keypair name for build instance"
 }
 
+variable "aws_private_key_file" {
+  type    = string
+  default = ""
+  description = "Path to the private key file for the existing AWS keypair"
+}
+
 variable "gcp_project" {
   type    = string
   default = "packer-demo-456789"
@@ -115,6 +121,7 @@ source "amazon-ebs" "aws_linux" {
   instance_type     = var.instance_type
   associate_public_ip_address = !var.disable_public_ip
   ssh_keypair_name  = var.aws_key_name
+  ssh_private_key_file = var.aws_private_key_file
 
   source_ami_filter {
     filters = {

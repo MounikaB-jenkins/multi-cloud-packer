@@ -60,110 +60,154 @@ pipeline {
             }
         }
 
-        stage('Build Images') {
+        stage('Setup AWS Key Pair') {
+            when { expression { params.BUILD_AWS || params.DEPLOY_AWS } }
             steps {
-                script {
-                    def vars = [
-                        "-var \"image_name=${params.IMAGE_NAME}\"",
-                        "-var \"region=${params.AWS_REGION}\"",
-                        "-var \"aws_key_name=${params.AWS_KEY_NAME}\"",
-                        "-var \"gcp_project=${params.GCP_PROJECT}\"",
-                        "-var \"gcp_zone=${params.GCP_ZONE}\"",
-                        "-var \"azure_location=${params.AZURE_LOCATION}\"",
-                        "-var \"azure_resource_group=${params.AZURE_RESOURCE_GROUP}\"",
-                        "-var \"azure_subscription_id=${params.AZURE_SUBSCRIPTION_ID}\"",
-                        "-var \"azure_tenant_id=${params.AZURE_TENANT_ID}\"",
-                        "-var \"image_type=${params.IMAGE_TYPE}\"",
-                        "-var \"instance_type=${params.INSTANCE_TYPE}\"",
-                        "-var \"disable_public_ip=${params.DISABLE_PUBLIC_IP}\""
-                    ].join(" ")
-
-                    // Determine source names based on image type
-                    def osType = params.IMAGE_TYPE == "Windows" ? "windows" : "linux"
-                    def sources = []
-                    if (params.BUILD_AWS) sources.add("amazon-ebs.aws_${osType}")
-                    if (params.BUILD_GCP) sources.add("googlecompute.gcp_${osType}")
-                    if (params.BUILD_AZURE) sources.add("azure-arm.azure_${osType}")
-
-                    if (sources.size() == 0) {
-                        error("No cloud providers selected for build.")
-                    }
-
-                    def onlyFlag = "--only=${sources.join(',')}"
-                    echo "Packer only targets: ${onlyFlag}"
-
-                    withCredentials([
-                        usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
-                        file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
-                        usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
-                    ]) {
+                withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    script {
+                        env.AWS_KEY_NAME = "packer-${BUILD_NUMBER}"
                         bat """
-                        echo Copying Packer executable to workspace...
-                        if exist "C:\\DevopsProject\\packer.exe" (
-                            copy /Y "C:\\DevopsProject\\packer.exe" .\\packer.exe
-                        ) else (
-                            echo ERROR: Packer executable not found at C:\\DevopsProject\\packer.exe
-                            exit /b 1
-                        )
                         setlocal enabledelayedexpansion
                         set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
                         set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
-                        set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
-                        set ARM_CLIENT_ID=%ARM_CLIENT_ID%
-                        set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
-                        set ARM_SUBSCRIPTION_ID=${params.AZURE_SUBSCRIPTION_ID}
-                        set ARM_TENANT_ID=${params.AZURE_TENANT_ID}
-
-                        echo Current workspace: %cd%
-                        dir /b
-
-                        echo Testing Packer template...
-                        if exist "${PACKER_TEMPLATE}" (
-                            echo Packer template found
-                        ) else (
-                            echo Packer template not found: ${PACKER_TEMPLATE}
-                            dir /b
-                            exit /b 1
-                        )
-                        echo Testing Packer executable...
-                        if exist packer.exe (
-                            echo Packer executable found
-                        ) else (
-                            echo Packer executable not found
-                            exit /b 1
-                        )
-                        echo Testing Packer executable...
-                        packer.exe --version
+                        
+                        echo Creating key-pair: %AWS_KEY_NAME%
+                        aws ec2 create-key-pair --key-name ${env.AWS_KEY_NAME} --region ${params.AWS_REGION} --query "KeyMaterial" --output text > private_key.pem
                         if %ERRORLEVEL% neq 0 (
-                            echo Packer executable test failed
+                            echo Failed to create key-pair
                             exit /b %ERRORLEVEL%
                         )
 
-                        echo Running Packer build...
-                        echo Command: packer.exe build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
-                        echo Environment variables:
-                        echo ARM_CLIENT_ID=%ARM_CLIENT_ID%
-                        echo ARM_SUBSCRIPTION_ID=%ARM_SUBSCRIPTION_ID%
-                        echo ARM_TENANT_ID=%ARM_TENANT_ID%
-                        packer.exe build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
+                        echo Storing key-pair in AWS Secrets Manager...
+                        aws secretsmanager create-secret --name ${env.AWS_KEY_NAME}-secret --description "Packer build key-pair for build ${BUILD_NUMBER}" --secret-string file://private_key.pem --region ${params.AWS_REGION}
                         if %ERRORLEVEL% neq 0 (
-                            echo Packer build failed with exit code %ERRORLEVEL%
+                            echo Failed to store secret in Secrets Manager
+                            del private_key.pem
                             exit /b %ERRORLEVEL%
                         )
 
-                        echo Listing workspace after Packer build...
-                        dir /b
-                        dir /s manifest.json || echo manifest.json not found in workspace tree
-
-                        if exist "manifest.json" (
-                            echo manifest.json created
-                        ) else (
-                            echo manifest.json missing after build
-                            exit /b 1
-                        )
+                        echo Key-pair setup complete. Private key retained for build.
+                        set AWS_PRIVATE_KEY_FILE=%cd%\\private_key.pem
+                        echo AWS_PRIVATE_KEY_FILE=!AWS_PRIVATE_KEY_FILE!
                         """
+                        env.AWS_PRIVATE_KEY_FILE = "${WORKSPACE}\\private_key.pem"
+                    }
+                }
+            }
+        }
 
-                        stash includes: 'manifest.json', name: 'packer-manifest'
+        stage('Build Images') {
+            steps {
+                script {
+                    try {
+                        def vars = [
+                            "-var \"image_name=${params.IMAGE_NAME}\"",
+                            "-var \"region=${params.AWS_REGION}\"",
+                            "-var \"aws_key_name=${env.AWS_KEY_NAME ?: params.AWS_KEY_NAME}\"",
+                            "-var \"aws_private_key_file=${env.AWS_PRIVATE_KEY_FILE ?: ''}\"",
+                            "-var \"gcp_project=${params.GCP_PROJECT}\"",
+                            "-var \"gcp_zone=${params.GCP_ZONE}\"",
+                            "-var \"azure_location=${params.AZURE_LOCATION}\"",
+                            "-var \"azure_resource_group=${params.AZURE_RESOURCE_GROUP}\"",
+                            "-var \"azure_subscription_id=${params.AZURE_SUBSCRIPTION_ID}\"",
+                            "-var \"azure_tenant_id=${params.AZURE_TENANT_ID}\"",
+                            "-var \"image_type=${params.IMAGE_TYPE}\"",
+                            "-var \"instance_type=${params.INSTANCE_TYPE}\"",
+                            "-var \"disable_public_ip=${params.DISABLE_PUBLIC_IP}\""
+                        ].join(" ")
+
+                        // Determine source names based on image type
+                        def osType = params.IMAGE_TYPE == "Windows" ? "windows" : "linux"
+                        def sources = []
+                        if (params.BUILD_AWS) sources.add("amazon-ebs.aws_${osType}")
+                        if (params.BUILD_GCP) sources.add("googlecompute.gcp_${osType}")
+                        if (params.BUILD_AZURE) sources.add("azure-arm.azure_${osType}")
+
+                        if (sources.size() == 0) {
+                            error("No cloud providers selected for build.")
+                        }
+
+                        def onlyFlag = "--only=${sources.join(',')}"
+                        echo "Packer only targets: ${onlyFlag}"
+
+                        withCredentials([
+                            usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
+                            file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
+                            usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
+                        ]) {
+                            bat """
+                            echo Copying Packer executable to workspace...
+                            if exist "C:\\DevopsProject\\packer.exe" (
+                                copy /Y "C:\\DevopsProject\\packer.exe" .\\packer.exe
+                            ) else (
+                                echo ERROR: Packer executable not found at C:\\DevopsProject\\packer.exe
+                                exit /b 1
+                            )
+                            setlocal enabledelayedexpansion
+                            set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
+                            set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
+                            set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
+                            set ARM_CLIENT_ID=%ARM_CLIENT_ID%
+                            set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
+                            set ARM_SUBSCRIPTION_ID=${params.AZURE_SUBSCRIPTION_ID}
+                            set ARM_TENANT_ID=${params.AZURE_TENANT_ID}
+
+                            echo Current workspace: %cd%
+                            dir /b
+
+                            echo Testing Packer template...
+                            if exist "${PACKER_TEMPLATE}" (
+                                echo Packer template found
+                            ) else (
+                                echo Packer template not found: ${PACKER_TEMPLATE}
+                                dir /b
+                                exit /b 1
+                            )
+                            echo Testing Packer executable...
+                            if exist packer.exe (
+                                echo Packer executable found
+                            ) else (
+                                echo Packer executable not found
+                                exit /b 1
+                            )
+                            echo Testing Packer executable...
+                            packer.exe --version
+                            if %ERRORLEVEL% neq 0 (
+                                echo Packer executable test failed
+                                exit /b %ERRORLEVEL%
+                            )
+
+                            echo Running Packer build...
+                            echo Command: packer.exe build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
+                            echo Environment variables:
+                            echo ARM_CLIENT_ID=%ARM_CLIENT_ID%
+                            echo ARM_SUBSCRIPTION_ID=%ARM_SUBSCRIPTION_ID%
+                            echo ARM_TENANT_ID=%ARM_TENANT_ID%
+                            packer.exe build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
+                            if %ERRORLEVEL% neq 0 (
+                                echo Packer build failed with exit code %ERRORLEVEL%
+                                exit /b %ERRORLEVEL%
+                            )
+
+                            echo Listing workspace after Packer build...
+                            dir /b
+                            dir /s manifest.json || echo manifest.json not found in workspace tree
+
+                            if exist "manifest.json" (
+                                echo manifest.json created
+                            ) else (
+                                echo manifest.json missing after build
+                                exit /b 1
+                            )
+                            """
+
+                            stash includes: 'manifest.json', name: 'packer-manifest'
+                        }
+                    } finally {
+                        if (env.AWS_PRIVATE_KEY_FILE && fileExists(env.AWS_PRIVATE_KEY_FILE)) {
+                            echo "Cleaning up local private key..."
+                            bat "del \"${env.AWS_PRIVATE_KEY_FILE}\""
+                        }
                     }
                 }
             }
@@ -231,7 +275,7 @@ pipeline {
                               --image-id ${env.AMI_ID} ^
                               --instance-type ${params.INSTANCE_TYPE} ^
                               --region ${params.AWS_REGION} ^
-                              --key-name ${params.AWS_KEY_NAME} ^
+                              --key-name ${env.AWS_KEY_NAME ?: params.AWS_KEY_NAME} ^
                               !SPOT_FLAG! ^
                               !NO_PIP! ^
                               --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${APP_NAME}},{Key=Environment,Value=${ENV}}]"
