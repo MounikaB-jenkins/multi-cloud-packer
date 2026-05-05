@@ -267,18 +267,19 @@ pipeline {
                             set AWS_REGION=${params.AWS_REGION}
                             set SG_NAME=packer-web-sg
                             
-                            echo Checking for Security Group: %SG_NAME%
-                            for /f "tokens=*" %%i in ('aws ec2 describe-security-groups --group-names %SG_NAME% --region %AWS_REGION% --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
+                            echo Checking for Security Group: !SG_NAME!
+                            set SG_ID=
+                            for /f "tokens=*" %%i in ('aws ec2 describe-security-groups --group-names !SG_NAME! --region !AWS_REGION! --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
                             
-                            if "%SG_ID%"=="" (
+                            if "!SG_ID!"=="" (
                                 echo Security Group not found. Creating...
-                                for /f "tokens=*" %%i in ('aws ec2 create-security-group --group-name %SG_NAME% --description "Security group for Packer web server" --region %AWS_REGION% --query "GroupId" --output text') do set SG_ID=%%i
+                                for /f "tokens=*" %%i in ('aws ec2 create-security-group --group-name !SG_NAME! --description "Security group for Packer web server" --region !AWS_REGION! --query "GroupId" --output text') do set SG_ID=%%i
                                 echo Created Security Group: !SG_ID!
                                 
-                                echo Authorizing SSH (Port 22)...
-                                aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 22 --cidr 0.0.0.0/0 --region %AWS_REGION%
-                                echo Authorizing HTTP (Port 80)...
-                                aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 80 --cidr 0.0.0.0/0 --region %AWS_REGION%
+                                echo Authorizing SSH Port 22...
+                                aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 22 --cidr 0.0.0.0/0 --region !AWS_REGION!
+                                echo Authorizing HTTP Port 80...
+                                aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 80 --cidr 0.0.0.0/0 --region !AWS_REGION!
                             ) else (
                                 echo Using existing Security Group: !SG_ID!
                             )
