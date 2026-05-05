@@ -19,11 +19,11 @@ pipeline {
         string(name: 'AZURE_TENANT_ID', defaultValue: '8344e416-02b8-4b70-a912-1995cc408f19', description: 'Azure tenant ID')
         string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for instance status notification')
         booleanParam(name: 'BUILD_AWS', defaultValue: true, description: 'Build AWS AMI')
-        booleanParam(name: 'BUILD_GCP', defaultValue: true, description: 'Build GCP Image')
-        booleanParam(name: 'BUILD_AZURE', defaultValue: true, description: 'Build Azure Image')
+        booleanParam(name: 'BUILD_GCP', defaultValue: false, description: 'Build GCP Image')
+        booleanParam(name: 'BUILD_AZURE', defaultValue: false, description: 'Build Azure Image')
         booleanParam(name: 'DEPLOY_AWS', defaultValue: true, description: 'Deploy AWS EC2 Instance')
-        booleanParam(name: 'DEPLOY_GCP', defaultValue: true, description: 'Deploy GCP VM')
-        booleanParam(name: 'DEPLOY_AZURE', defaultValue: true, description: 'Deploy Azure VM')
+        booleanParam(name: 'DEPLOY_GCP', defaultValue: false, description: 'Deploy GCP VM')
+        booleanParam(name: 'DEPLOY_AZURE', defaultValue: false, description: 'Deploy Azure VM')
     }
 
     environment {
