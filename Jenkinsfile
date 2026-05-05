@@ -264,6 +264,24 @@ pipeline {
                             setlocal enabledelayedexpansion
                             set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
                             set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
+                            set AWS_REGION=${params.AWS_REGION}
+                            set SG_NAME=packer-web-sg
+                            
+                            echo Checking for Security Group: %SG_NAME%
+                            for /f "tokens=*" %%i in ('aws ec2 describe-security-groups --group-names %SG_NAME% --region %AWS_REGION% --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
+                            
+                            if "%SG_ID%"=="" (
+                                echo Security Group not found. Creating...
+                                for /f "tokens=*" %%i in ('aws ec2 create-security-group --group-name %SG_NAME% --description "Security group for Packer web server" --region %AWS_REGION% --query "GroupId" --output text') do set SG_ID=%%i
+                                echo Created Security Group: !SG_ID!
+                                
+                                echo Authorizing SSH (Port 22)...
+                                aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 22 --cidr 0.0.0.0/0 --region %AWS_REGION%
+                                echo Authorizing HTTP (Port 80)...
+                                aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 80 --cidr 0.0.0.0/0 --region %AWS_REGION%
+                            ) else (
+                                echo Using existing Security Group: !SG_ID!
+                            )
                             
                             set SPOT_FLAG=
                             if "${params.INSTANCE_MODE}"=="Spot" set SPOT_FLAG=--instance-market-options MarketType=spot
@@ -271,11 +289,13 @@ pipeline {
                             set NO_PIP=
                             if "${params.DISABLE_PUBLIC_IP}"=="true" set NO_PIP=--no-associate-public-ip-address
                             
+                            echo Deploying instance with Security Group: !SG_ID!
                             aws ec2 run-instances ^
                               --image-id ${env.AMI_ID} ^
                               --instance-type ${params.INSTANCE_TYPE} ^
                               --region ${params.AWS_REGION} ^
                               --key-name ${env.AWS_KEY_NAME ?: params.AWS_KEY_NAME} ^
+                              --security-group-ids !SG_ID! ^
                               !SPOT_FLAG! ^
                               !NO_PIP! ^
                               --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${APP_NAME}},{Key=Environment,Value=${ENV}}]"
