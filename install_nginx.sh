@@ -1,10 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
-# Logging disabled to avoid permission issues inside the Packer shell provisioner
-# exec > >(tee -a /var/log/packer-provision.log) 2>&1
-
 echo "===== Starting Nginx Provisioning ====="
+
+# Function to wait for apt lock
+wait_for_apt() {
+    echo "Waiting for apt locks to be released..."
+    while sudo fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/lib/dpkg/lock >/dev/null 2>&1; do
+        echo "Apt is locked. Waiting 5 seconds..."
+        sleep 5
+    done
+    echo "Apt is free."
+}
 
 # Detect OS
 OS_TYPE="unknown"
@@ -21,9 +28,16 @@ echo "Detected OS: $OS_TYPE"
 case $OS_TYPE in
     ubuntu|debian)
         echo "Installing Nginx on Debian/Ubuntu..."
-        sudo mkdir -p /var/lib/apt/lists
-        sudo chmod 755 /var/lib/apt/lists
-        sudo apt-get update -y
+        wait_for_apt
+        
+        # Retry logic for apt-get update
+        for i in {1..5}; do
+            sudo apt-get update -y && break || {
+                echo "Update failed, retrying in 10s ($i/5)..."
+                sleep 10
+            }
+        done
+
         sudo apt-get install -y nginx
         NGINX_HTML_DIR="/var/www/html"
         ;;
