@@ -1,181 +1,87 @@
 # Jenkins Pipeline Setup Guide
 
 ## Overview
-This guide covers setting up a Jenkins pipeline job that runs the multi-cloud Packer build and deployment pipeline.
+This project uses two separate Jenkins pipelines to decouple the build process from multi-cloud instance management.
+
+1. **AMI Creation Pipeline**: Builds AWS AMI, GCP Image, and Azure Managed Image using Packer.
+2. **multi-cloud-Instance Spinup Pipeline**: Manages instance lifecycle (START/STOP) across all three clouds.
+
+---
+
+## 1. AMI Creation Pipeline
+
+### Purpose
+Triggers Packer to build images and securely stores the production SSH key in cloud-native secret managers.
+
+### Jenkins Job Configuration
+1. **New Item** → Pipeline
+2. **Name**: `1-AMI-Creation`
+3. **Pipeline Definition**: Pipeline script from SCM
+4. **SCM**: Git
+5. **Repository URL**: `https://github.com/MounikaB-jenkins/multi-cloud-packer.git`
+6. **Script Path**: `Jenkinsfile.ami_creation`
+
+### Key Features
+- **Key Storage**: Automatically stores the generated SSH private key in:
+  - **AWS**: Secrets Manager (`prod-key-<build>-secret`)
+  - **GCP**: Secret Manager (`prod-key-<build>-secret`)
+  - **Azure**: Key Vault (`prod-key-<build>-secret`)
+- **Email Notification**: Sends the new Image IDs and the Secret Name to the specified email.
+
+---
+
+## 2. multi-cloud-Instance Spinup Pipeline
+
+### Purpose
+Launches or stops instances in AWS, GCP, or Azure using the images and secrets created by the build pipeline.
+
+### Jenkins Job Configuration
+1. **New Item** → Pipeline
+2. **Name**: `multi-cloud-Instance Spinup`
+3. **Pipeline Definition**: Pipeline script from SCM
+4. **SCM**: Git
+5. **Repository URL**: `https://github.com/MounikaB-jenkins/multi-cloud-packer.git`
+6. **Script Path**: `Jenkinsfile.instance_spinup`
+
+### Parameters
+- `ACTION`: Choose `START` or `STOP`.
+- `CLOUD`: Choose `AWS`, `GCP`, or `AZURE`.
+- `IMAGE_ID`: The ID of the image to launch (e.g., `ami-12345`).
+- `SECRET_NAME`: The name of the secret containing the SSH key (received via email from the build job).
+- `INSTANCE_ID`: (Required for STOP) The ID of the instance to stop.
+- `EMAIL`: Notification recipient.
+
+---
 
 ## Prerequisites
 
-### Jenkins Setup
-1. Jenkins server installed and running
-2. Jenkins plugins installed:
-   - Pipeline (Declarative Agent Generic)
-   - Git plugin
-   - Credentials Binding Plugin
-   - AWS Steps Plugin (for AWS CLI)
-   - Google Cloud Tools Plugin (for GCP)
-   - Azure CLI Plugin (for Azure)
-
-### Local Setup
-- Packer installed at: `C:\Users\vresh\Desktop\TrainingFiles_Srikanthmentor\multi-cloud-packer\packer.exe`
-- Git installed and configured
-- AWS CLI, Google Cloud SDK, and Azure CLI installed
+### Jenkins Plugins
+- **Pipeline**, **Git**, **Credentials Binding**
+- **Email Extension Plugin**
+- **Pipeline Utility Steps** (for `readJSON`)
 
 ### Cloud Credentials
-Set up the following Jenkins Credentials (Manage Jenkins → Manage Credentials):
+- **Credential ID**: `aws-creds` (AWS Access/Secret)
+- **Credential ID**: `gcp-key` (GCP JSON Key file)
+- **Credential ID**: `azure-creds` (Azure Client ID/Secret)
 
-#### 1. GitHub Token (Secret text)
-- **Credential ID**: `github-token`
-- **Secret**: Your GitHub Personal Access Token
-- **Scope**: Global
+---
 
-#### 2. AWS Credentials (Username + password)
-- **Credential ID**: `aws-creds`
-- **Username**: AWS Access Key ID
-- **Password**: AWS Secret Access Key
-- **Scope**: Global
+## Running the Workflow
 
-#### 3. GCP Service Account (Secret file)
-- **Credential ID**: `gcp-key`
-- **File**: GCP service account JSON key file
-- **Scope**: Global
+1. **Step 1**: Run `1-AMI-Creation`.
+   - Packer builds the images.
+   - SSH keys are generated and stored in cloud vaults.
+   - Check your email for the **Image IDs** and **Secret Name**.
 
-#### 4. Azure Credentials (Username + password)
-- **Credential ID**: `azure-creds`
-- **Username**: Azure Client ID
-- **Password**: Azure Client Secret
-- **Scope**: Global
+2. **Step 2**: Run `multi-cloud-Instance Spinup`.
+   - Select `ACTION = START` and the target `CLOUD`.
+   - Provide the `IMAGE_ID` and `SECRET_NAME` from Step 1.
+   - The pipeline handles security groups (AWS) and firewall tags (GCP).
+   - A Production VM is launched.
+   - Check your email for the **Public IP address**.
 
-#### 5. Azure Environment Variables (Environment variables)
-Set in Jenkins Configuration (Manage Jenkins → Configure System → Global properties):
-- `AZURE_SUBSCRIPTION_ID`: Your Azure subscription ID
-- `AZURE_TENANT_ID`: Your Azure tenant ID
-
-## Jenkins Job Creation
-
-### Option 1: Multibranch Pipeline (Recommended)
-
-1. **New Item** → Create new job
-2. **Job Type**: Select "Multibranch Pipeline"
-3. **Job Name**: `multi-cloud-packer-pipeline`
-4. **Configuration**:
-   - **Branch Sources**: GitHub
-     - **Repository HTTPS URL**: `https://github.com/MounikaB-jenkins/multi-cloud-packer.git`
-     - **Credentials**: Select `github-token`
-   - **Build Configuration**:
-     - **Mode**: by Jenkinsfile
-     - **Script Path**: `Jenkinsfile`
-5. **Save**
-
-Jenkins will automatically detect and execute the `Jenkinsfile` from the repository.
-
-### Option 2: Pipeline Job (Manual Configuration)
-
-1. **New Item** → Create new job
-2. **Job Type**: Select "Pipeline"
-3. **Job Name**: `multi-cloud-packer-pipeline`
-4. **Configuration**:
-   - **Pipeline**:
-     - **Definition**: Pipeline script from SCM
-     - **SCM**: Git
-     - **Repository URL**: `https://github.com/MounikaB-jenkins/multi-cloud-packer.git`
-     - **Credentials**: Select `github-token`
-     - **Branch Specifier**: `*/main`
-     - **Script Path**: `Jenkinsfile`
-5. **Save**
-
-## Running the Pipeline
-
-### Method 1: Manual Trigger
-1. Open the Jenkins job
-2. Click **Build with Parameters**
-3. Set your parameters:
-   - `IMAGE_NAME`: multi-cloud-ubuntu (or custom name)
-   - `AWS_REGION`: us-east-1
-   - `BUILD_AWS`: true/false
-   - `BUILD_GCP`: true/false
-   - `BUILD_AZURE`: true/false
-   - Toggle deployment flags as needed
-4. Click **Build**
-
-### Method 2: Git Webhook Trigger
-1. In Jenkins job, check **Build when a change is pushed to GitHub**
-2. Copy the **Payload URL** from Jenkins
-3. Go to GitHub repository → Settings → Webhooks
-4. Add webhook with the Payload URL
-5. Select events: Push events
-6. Push to `main` branch will trigger the pipeline automatically
-
-## Troubleshooting
-
-### Pipeline Fails at "Checkout" Stage
-- Verify GitHub token has `repo` scope
-- Check repository URL is correct
-- Ensure Jenkins has internet access
-
-### Pipeline Fails at "Init & Validate" Stage
-- Verify Packer path is correct: `C:\Users\vresh\Desktop\TrainingFiles_Srikanthmentor\multi-cloud-packer\packer.exe`
-- Run `packer init .` locally to verify template syntax
-- Check that all Packer plugins are available
-
-### Build Fails Due to Missing Credentials
-- Verify all 5 credential types are set up correctly
-- Check credential IDs match exactly in Jenkinsfile
-- Test credentials by running a simple build
-
-### Image ID Extraction Fails
-- Verify `manifest.json` is being generated by Packer
-- Check manifest.json format matches expected structure
-- Review Packer build output for errors
-
-## Testing the Pipeline
-
-### 1. Test Checkout Only
-Edit Jenkinsfile to comment out stages after Checkout:
-```groovy
-// stage('Init & Validate') { ...
-// stage('Build Images') { ...
-```
-
-### 2. Test Packer Locally First
-```bash
-cd C:\DevopsProject\multi-cloud-packer
-packer init .
-packer validate aws-ubuntu.pkr.hcl
-packer build -var 'image_name=test-image' aws-ubuntu.pkr.hcl
-```
-
-### 3. Monitor Build Logs
-- Check Jenkins build logs in real-time
-- Review Packer output for detailed information
-- Check AWS/GCP/Azure console for image creation status
-
-## Post-Build Actions
-
-After successful build:
-- AMI will be available in AWS with tags
-- GCP Image will be available in your GCP project
-- Azure Image will be available in your resource group
-- `manifest.json` is archived in Jenkins
-
-## Environment Variables Available in Pipeline
-
-| Variable | Source |
-|----------|--------|
-| `IMAGE_NAME` | Parameter (default: multi-cloud-ubuntu) |
-| `AWS_REGION` | Parameter (default: us-east-1) |
-| `GCP_PROJECT` | Parameter (default: packer-demo-456789) |
-| `AZURE_LOCATION` | Parameter (default: East US) |
-| `APP_NAME` | Environment (multi-cloud-nginx) |
-| `ENV` | Environment (dev) |
-| `OWNER` | Environment (jenkins) |
-| `AMI_ID` | Extracted from manifest.json |
-| `GCP_IMAGE` | Extracted from manifest.json |
-| `AZURE_IMAGE` | Extracted from manifest.json |
-
-## Additional Resources
-
-- [Jenkins Pipeline Documentation](https://www.jenkins.io/doc/book/pipeline/)
-- [Packer Documentation](https://www.packer.io/docs)
-- [AWS EC2 Launch Template](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-launch-templates.html)
-- [GCP Compute Instances](https://cloud.google.com/compute/docs/instances)
-- [Azure Virtual Machines](https://docs.microsoft.com/en-us/azure/virtual-machines/)
+3. **Step 3**: To stop the instance:
+   - Run `multi-cloud-Instance Spinup`.
+   - Select `ACTION = STOP` and provide the `INSTANCE_ID`.
+   - Check your email for confirmation.

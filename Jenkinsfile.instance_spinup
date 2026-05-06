@@ -1,0 +1,121 @@
+pipeline {
+    agent any
+
+    parameters {
+        choice(name: 'ACTION', choices: ['START', 'STOP'], description: 'Action to perform.')
+        choice(name: 'CLOUD', choices: ['AWS', 'GCP', 'AZURE'], description: 'Target cloud provider.')
+        string(name: 'IMAGE_ID', defaultValue: '', description: 'AMI ID, GCP Image, or Azure Image ID to launch (required for START if not using latest).')
+        string(name: 'INSTANCE_ID', defaultValue: '', description: 'Instance ID to stop (required for STOP).')
+        string(name: 'SECRET_NAME', defaultValue: '', description: 'Name of the secret containing the SSH key (e.g. prod-key-1-secret).')
+        string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region.')
+        string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID.')
+        string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone.')
+        string(name: 'AZURE_VAULT_NAME', defaultValue: 'my-key-vault', description: 'Azure Key Vault name.')
+        string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group.')
+        string(name: 'AZURE_TENANT_ID', defaultValue: '8344e416-02b8-4b70-a912-1995cc408f19', description: 'Azure tenant ID.')
+        string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for notification.')
+    }
+
+    stages {
+        stage('Manage Instance') {
+            steps {
+                script {
+                    withCredentials([
+                        usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
+                        file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
+                        usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
+                    ]) {
+                        if (params.ACTION == 'START') {
+                            deployInstance()
+                        } else {
+                            stopInstance()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                def status = currentBuild.result ?: 'SUCCESS'
+                emailext(
+                    subject: "Instance ${params.ACTION} on ${params.CLOUD}: ${status}",
+                    body: "Action: ${params.ACTION}\nCloud: ${params.CLOUD}\nInstance: ${env.TARGET_INSTANCE_ID ?: params.INSTANCE_ID}\nIP: ${env.PUBLIC_IP ?: 'N/A'}",
+                    to: "${params.EMAIL}"
+                )
+            }
+        }
+    }
+}
+
+def deployInstance() {
+    switch(params.CLOUD) {
+        case 'AWS':
+            bat """
+            set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
+            set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
+            
+            :: 1. Security Group
+            for /f "tokens=*" %%i in ('aws ec2 describe-security-groups --group-names production-web-sg --region ${params.AWS_REGION} --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
+            if "%SG_ID%"=="" (
+                for /f "tokens=*" %%i in ('aws ec2 create-security-group --group-name production-web-sg --description "Prod SG" --region ${params.AWS_REGION} --query "GroupId" --output text') do set SG_ID=%%i
+                aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ${params.AWS_REGION}
+                aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ${params.AWS_REGION}
+            )
+
+            :: 2. Find Image
+            set TARGET_IMAGE=${params.IMAGE_ID}
+            if "%TARGET_IMAGE%"=="" (
+                for /f "tokens=*" %%i in ('aws ec2 describe-images --owners self --filters "Name=name,Values=multi-cloud-ubuntu-*" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text --region ${params.AWS_REGION}') do set TARGET_IMAGE=%%i
+            )
+
+            :: 3. Launch
+            for /f "tokens=*" %%i in ('aws ec2 run-instances --image-id %TARGET_IMAGE% --instance-type t2.micro --region ${params.AWS_REGION} --security-group-ids %SG_ID% --key-name ${params.SECRET_NAME.replace('-secret','')} --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
+            echo TARGET_INSTANCE_ID=%INST_ID% > env.props
+            """
+            break
+            
+        case 'GCP':
+            bat """
+            set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
+            gcloud compute instances create prod-vm-${BUILD_NUMBER} ^
+                --image=${params.IMAGE_ID} ^
+                --project=${params.GCP_PROJECT} ^
+                --zone=${params.GCP_ZONE} ^
+                --machine-type=e2-micro ^
+                --tags=http-server,https-server
+            """
+            break
+            
+        case 'AZURE':
+            bat """
+            set ARM_CLIENT_ID=%ARM_CLIENT_ID%
+            set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
+            az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
+            az vm create ^
+                --resource-group ${params.AZURE_RESOURCE_GROUP} ^
+                --name prod-vm-${BUILD_NUMBER} ^
+                --image ${params.IMAGE_ID} ^
+                --admin-username azureuser ^
+                --generate-ssh-keys false ^
+                --public-ip-sku Standard
+            """
+            break
+    }
+}
+
+def stopInstance() {
+    switch(params.CLOUD) {
+        case 'AWS':
+            bat "aws ec2 stop-instances --instance-ids ${params.INSTANCE_ID} --region ${params.AWS_REGION}"
+            break
+        case 'GCP':
+            bat "gcloud compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}"
+            break
+        case 'AZURE':
+            bat "az vm stop --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}"
+            break
+    }
+}
