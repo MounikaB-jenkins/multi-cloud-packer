@@ -42,7 +42,7 @@ pipeline {
                 def status = currentBuild.result ?: 'SUCCESS'
                 emailext(
                     subject: "Instance ${params.ACTION} on ${params.CLOUD}: ${status}",
-                    body: "Action: ${params.ACTION}\nCloud: ${params.CLOUD}\nInstance: ${env.TARGET_INSTANCE_ID ?: params.INSTANCE_ID}\nIP: ${env.PUBLIC_IP ?: 'N/A'}",
+                    body: "Action: ${params.ACTION}\nCloud: ${params.CLOUD}\nInstance: ${env.TARGET_INSTANCE_ID ?: params.INSTANCE_ID}\nIP: ${env.PUBLIC_IP ?: 'N/A'}\n\nNote: If SSH fails, please wait 2-3 minutes for the instance to finish booting.",
                     to: "${params.EMAIL}"
                 )
             }
@@ -54,35 +54,49 @@ def deployInstance() {
     switch(params.CLOUD) {
         case 'AWS':
             bat """
+            @echo off
             set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
             set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
+            set AWS_DEFAULT_REGION=${params.AWS_REGION}
             
-            :: 1. Security Group
-            for /f "tokens=*" %%i in ('aws ec2 describe-security-groups --group-names production-web-sg --region ${params.AWS_REGION} --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
+            :: 1. Security Group Management
+            echo Checking Security Group: production-web-sg
+            set SG_ID=
+            for /f "tokens=*" %%i in ('aws ec2 describe-security-groups --group-names production-web-sg --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
+            
             if "%SG_ID%"=="" (
-                for /f "tokens=*" %%i in ('aws ec2 create-security-group --group-name production-web-sg --description "Prod SG" --region ${params.AWS_REGION} --query "GroupId" --output text') do set SG_ID=%%i
-                aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ${params.AWS_REGION}
-                aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ${params.AWS_REGION}
+                echo Creating new Security Group...
+                for /f "tokens=*" %%i in ('aws ec2 create-security-group --group-name production-web-sg --description "Production Security Group" --query "GroupId" --output text') do set SG_ID=%%i
             )
+            echo Using Security Group ID: %SG_ID%
+
+            echo Authorizing SSH (22), HTTP (80) and ICMP (Ping)...
+            aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 22 --cidr 0.0.0.0/0 2>nul
+            aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 80 --cidr 0.0.0.0/0 2>nul
+            aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol icmp --port -1 --cidr 0.0.0.0/0 2>nul
 
             :: 2. Find Image
             set TARGET_IMAGE=${params.IMAGE_ID}
             if "%TARGET_IMAGE%"=="" (
-                for /f "tokens=*" %%i in ('aws ec2 describe-images --owners self --filters "Name=name,Values=multi-cloud-ubuntu-*" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text --region ${params.AWS_REGION}') do set TARGET_IMAGE=%%i
+                echo Finding latest AMI...
+                for /f "tokens=*" %%i in ('aws ec2 describe-images --owners self --filters "Name=name,Values=multi-cloud-ubuntu-*" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text') do set TARGET_IMAGE=%%i
             )
+            echo Using Image ID: %TARGET_IMAGE%
 
-            :: 3. Launch
-            for /f "tokens=*" %%i in ('aws ec2 run-instances --image-id %TARGET_IMAGE% --instance-type t2.micro --region ${params.AWS_REGION} --security-group-ids %SG_ID% --key-name ${params.SECRET_NAME.replace('-secret','')} --associate-public-ip-address --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
+            :: 3. Launch Instance
+            set KEY_NAME=${params.SECRET_NAME.replace('-secret','')}
+            echo Launching instance with key: %KEY_NAME%
+            for /f "tokens=*" %%i in ('aws ec2 run-instances --image-id %TARGET_IMAGE% --instance-type t2.micro --security-group-ids %SG_ID% --key-name %KEY_NAME% --associate-public-ip-address --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=prod-instance}]" --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
             
-            echo Waiting for instance %INST_ID% to get public IP...
-            :wait_ip
-            timeout /t 10
-            for /f "tokens=*" %%i in ('aws ec2 describe-instances --instance-ids %INST_ID% --region ${params.AWS_REGION} --query "Reservations[0].Instances[0].PublicIpAddress" --output text') do set PUBLIC_IP=%%i
-            if "%PUBLIC_IP%"=="None" goto wait_ip
-            if "%PUBLIC_IP%"=="" goto wait_ip
+            echo Waiting for instance %INST_ID% to reach 'running' state...
+            aws ec2 wait instance-running --instance-ids %INST_ID%
 
+            echo Retrieving Public IP...
+            for /f "tokens=*" %%i in ('aws ec2 describe-instances --instance-ids %INST_ID% --query "Reservations[0].Instances[0].PublicIpAddress" --output text') do set PUBLIC_IP=%%i
+            
             echo TARGET_INSTANCE_ID=%INST_ID% > env.props
             echo PUBLIC_IP=%PUBLIC_IP% >> env.props
+            echo AWS Setup Complete. Instance: %INST_ID%, IP: %PUBLIC_IP%
             """
             def props = readProperties file: 'env.props'
             env.TARGET_INSTANCE_ID = props['TARGET_INSTANCE_ID']
