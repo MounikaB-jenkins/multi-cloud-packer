@@ -72,9 +72,21 @@ def deployInstance() {
             )
 
             :: 3. Launch
-            for /f "tokens=*" %%i in ('aws ec2 run-instances --image-id %TARGET_IMAGE% --instance-type t2.micro --region ${params.AWS_REGION} --security-group-ids %SG_ID% --key-name ${params.SECRET_NAME.replace('-secret','')} --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
+            for /f "tokens=*" %%i in ('aws ec2 run-instances --image-id %TARGET_IMAGE% --instance-type t2.micro --region ${params.AWS_REGION} --security-group-ids %SG_ID% --key-name ${params.SECRET_NAME.replace('-secret','')} --associate-public-ip-address --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
+            
+            echo Waiting for instance %INST_ID% to get public IP...
+            :wait_ip
+            timeout /t 10
+            for /f "tokens=*" %%i in ('aws ec2 describe-instances --instance-ids %INST_ID% --region ${params.AWS_REGION} --query "Reservations[0].Instances[0].PublicIpAddress" --output text') do set PUBLIC_IP=%%i
+            if "%PUBLIC_IP%"=="None" goto wait_ip
+            if "%PUBLIC_IP%"=="" goto wait_ip
+
             echo TARGET_INSTANCE_ID=%INST_ID% > env.props
+            echo PUBLIC_IP=%PUBLIC_IP% >> env.props
             """
+            def props = readProperties file: 'env.props'
+            env.TARGET_INSTANCE_ID = props['TARGET_INSTANCE_ID']
+            env.PUBLIC_IP = props['PUBLIC_IP']
             break
             
         case 'GCP':
