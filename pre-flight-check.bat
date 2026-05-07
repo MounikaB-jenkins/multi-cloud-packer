@@ -4,6 +4,10 @@ REM This script validates that all prerequisites are met before running the pipe
 
 setlocal enabledelayedexpansion
 
+:: Add common paths to PATH for the duration of this script
+set "PATH=%PATH%;C:\Program Files (x86)\Google\Cloud SDK\google-cloud-sdk\bin;C:\Program Files\Google\Cloud SDK\google-cloud-sdk\bin;%LocalAppData%\Google\Cloud SDK\google-cloud-sdk\bin"
+set "PATH=%PATH%;C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin;C:\Program Files\Microsoft SDKs\Azure\CLI2\bin"
+
 echo ================================
 echo Jenkins Pipeline Pre-Flight Check
 echo ================================

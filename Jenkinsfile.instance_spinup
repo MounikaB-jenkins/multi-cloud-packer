@@ -10,7 +10,7 @@ pipeline {
         string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region.')
         string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID.')
         string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone.')
-        string(name: 'AZURE_VAULT_NAME', defaultValue: 'my-key-vault', description: 'Azure Key Vault name.')
+        string(name: 'AZURE_VAULT_NAME', defaultValue: 'packer-vault', description: 'Azure Key Vault name.')
         string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group.')
         string(name: 'AZURE_SUBSCRIPTION_ID', defaultValue: 'b943e408-73c1-4cea-b780-689120606f67', description: 'Azure subscription ID')
         string(name: 'AZURE_TENANT_ID', defaultValue: '8344e416-02b8-4b70-a912-1995cc408f19', description: 'Azure tenant ID.')
@@ -61,25 +61,25 @@ def deployInstance() {
             set AWS_DEFAULT_REGION=${params.AWS_REGION}
             
             :: 1. Security Group Management
-            for /f "tokens=*" %%i in ('aws ec2 describe-security-groups --group-names production-web-sg --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
+            for /f "tokens=*" %%i in ('call aws ec2 describe-security-groups --group-names production-web-sg --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
             if "%SG_ID%"=="" (
-                for /f "tokens=*" %%i in ('aws ec2 create-security-group --group-name production-web-sg --description "Production Security Group" --query "GroupId" --output text') do set SG_ID=%%i
+                for /f "tokens=*" %%i in ('call aws ec2 create-security-group --group-name production-web-sg --description "Production Security Group" --query "GroupId" --output text') do set SG_ID=%%i
             )
-            aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 22 --cidr 0.0.0.0/0 2>nul
-            aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 80 --cidr 0.0.0.0/0 2>nul
-            aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol icmp --port -1 --cidr 0.0.0.0/0 2>nul
+            call aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 22 --cidr 0.0.0.0/0 2>nul
+            call aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 80 --cidr 0.0.0.0/0 2>nul
+            call aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol icmp --port -1 --cidr 0.0.0.0/0 2>nul
 
             :: 2. Find Image
             set TARGET_IMAGE=${params.IMAGE_ID}
             if "%TARGET_IMAGE%"=="" (
-                for /f "tokens=*" %%i in ('aws ec2 describe-images --owners self --filters "Name=name,Values=multi-cloud-ubuntu-*" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text') do set TARGET_IMAGE=%%i
+                for /f "tokens=*" %%i in ('call aws ec2 describe-images --owners self --filters "Name=name,Values=multi-cloud-ubuntu-*" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text') do set TARGET_IMAGE=%%i
             )
 
             :: 3. Launch
             set KEY_NAME=${params.SECRET_NAME.replace('-secret','')}
-            for /f "tokens=*" %%i in ('aws ec2 run-instances --image-id %TARGET_IMAGE% --instance-type t2.micro --security-group-ids %SG_ID% --key-name %KEY_NAME% --associate-public-ip-address --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
-            aws ec2 wait instance-running --instance-ids %INST_ID%
-            for /f "tokens=*" %%i in ('aws ec2 describe-instances --instance-ids %INST_ID% --query "Reservations[0].Instances[0].PublicIpAddress" --output text') do set PUBLIC_IP=%%i
+            for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id %TARGET_IMAGE% --instance-type t2.micro --security-group-ids %SG_ID% --key-name %KEY_NAME% --associate-public-ip-address --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
+            call aws ec2 wait instance-running --instance-ids %INST_ID%
+            for /f "tokens=*" %%i in ('call aws ec2 describe-instances --instance-ids %INST_ID% --query "Reservations[0].Instances[0].PublicIpAddress" --output text') do set PUBLIC_IP=%%i
             
             echo TARGET_INSTANCE_ID=%INST_ID% > env.props
             echo PUBLIC_IP=%PUBLIC_IP% >> env.props
@@ -89,6 +89,9 @@ def deployInstance() {
         case 'GCP':
             bat """
             @echo off
+            :: Ensure common paths are in PATH
+            set "PATH=%PATH%;C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin;%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin"
+            
             set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
             set INSTANCE_NAME=prod-vm-%BUILD_NUMBER%
             
@@ -106,6 +109,11 @@ def deployInstance() {
                 --tags=prod-web ^
                 --format="get(networkInterfaces[0].accessConfigs[0].natIP)" > nat_ip.txt
             
+            if %ERRORLEVEL% neq 0 (
+                echo GCP Instance launch failed.
+                exit /b %ERRORLEVEL%
+            )
+            
             set /p PUBLIC_IP=<nat_ip.txt
             echo TARGET_INSTANCE_ID=%INSTANCE_NAME% > env.props
             echo PUBLIC_IP=%PUBLIC_IP% >> env.props
@@ -115,6 +123,9 @@ def deployInstance() {
         case 'AZURE':
             bat """
             @echo off
+            :: Ensure common paths are in PATH
+            set "PATH=%PATH%;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin"
+            
             set ARM_CLIENT_ID=%ARM_CLIENT_ID%
             set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
             set VM_NAME=prod-vm-%BUILD_NUMBER%
@@ -132,6 +143,11 @@ def deployInstance() {
                 --public-ip-sku Standard ^
                 --nsg-rule SSH ^
                 --query "{ip:publicIpAddress, id:id}" --output json > vm_info.json
+            
+            if %ERRORLEVEL% neq 0 (
+                echo Azure VM launch failed.
+                exit /b %ERRORLEVEL%
+            )
             
             :: 2. Open Port 80
             echo Opening Port 80...
@@ -152,15 +168,20 @@ def deployInstance() {
 def stopInstance() {
     switch(params.CLOUD) {
         case 'AWS':
-            bat "aws ec2 stop-instances --instance-ids ${params.INSTANCE_ID} --region ${params.AWS_REGION}"
+            bat "call aws ec2 stop-instances --instance-ids ${params.INSTANCE_ID} --region ${params.AWS_REGION}"
             break
         case 'GCP':
-            bat "call gcloud compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}"
+            bat """
+            @echo off
+            set "PATH=%PATH%;C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin;%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin"
+            call gcloud compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}
+            """
             break
         case 'AZURE':
             withCredentials([usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')]) {
                 bat """
                 @echo off
+                set "PATH=%PATH%;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin"
                 set ARM_CLIENT_ID=%ARM_CLIENT_ID%
                 set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
                 call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}

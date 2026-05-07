@@ -48,6 +48,7 @@ pipeline {
         stage('Init & Validate') {
             steps {
                 bat """
+                @echo off
                 if exist "C:\\DevopsProject\\packer.exe" (
                     copy /Y "C:\\DevopsProject\\packer.exe" .\\packer.exe
                 ) else (
@@ -67,19 +68,20 @@ pipeline {
                     script {
                         env.AWS_KEY_NAME = "packer-${BUILD_NUMBER}"
                         bat """
+                        @echo off
                         setlocal enabledelayedexpansion
                         set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
                         set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
                         
                         echo Creating key-pair: %AWS_KEY_NAME%
-                        aws ec2 create-key-pair --key-name ${env.AWS_KEY_NAME} --region ${params.AWS_REGION} --query "KeyMaterial" --output text > private_key.pem
+                        call aws ec2 create-key-pair --key-name ${env.AWS_KEY_NAME} --region ${params.AWS_REGION} --query "KeyMaterial" --output text > private_key.pem
                         if %ERRORLEVEL% neq 0 (
                             echo Failed to create key-pair
                             exit /b %ERRORLEVEL%
                         )
 
                         echo Storing key-pair in AWS Secrets Manager...
-                        aws secretsmanager create-secret --name ${env.AWS_KEY_NAME}-secret --description "Packer build key-pair for build ${BUILD_NUMBER}" --secret-string file://private_key.pem --region ${params.AWS_REGION}
+                        call aws secretsmanager create-secret --name ${env.AWS_KEY_NAME}-secret --description "Packer build key-pair for build ${BUILD_NUMBER}" --secret-string file://private_key.pem --region ${params.AWS_REGION}
                         if %ERRORLEVEL% neq 0 (
                             echo Failed to store secret in Secrets Manager
                             del private_key.pem
@@ -136,6 +138,7 @@ pipeline {
                             usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
                         ]) {
                             bat """
+                            @echo off
                             echo Copying Packer executable to workspace...
                             if exist "C:\\DevopsProject\\packer.exe" (
                                 copy /Y "C:\\DevopsProject\\packer.exe" .\\packer.exe
@@ -179,10 +182,6 @@ pipeline {
 
                             echo Running Packer build...
                             echo Command: packer.exe build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
-                            echo Environment variables:
-                            echo ARM_CLIENT_ID=%ARM_CLIENT_ID%
-                            echo ARM_SUBSCRIPTION_ID=%ARM_SUBSCRIPTION_ID%
-                            echo ARM_TENANT_ID=%ARM_TENANT_ID%
                             packer.exe build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
                             if %ERRORLEVEL% neq 0 (
                                 echo Packer build failed with exit code %ERRORLEVEL%
@@ -261,6 +260,7 @@ pipeline {
                     steps {
                         withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
                             bat """
+                            @echo off
                             setlocal enabledelayedexpansion
                             set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
                             set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
@@ -269,17 +269,17 @@ pipeline {
                             
                             echo Checking for Security Group: !SG_NAME!
                             set SG_ID=
-                            for /f "tokens=*" %%i in ('aws ec2 describe-security-groups --group-names !SG_NAME! --region !AWS_REGION! --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
+                            for /f "tokens=*" %%i in ('call aws ec2 describe-security-groups --group-names !SG_NAME! --region !AWS_REGION! --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
                             
                             if "!SG_ID!"=="" (
                                 echo Security Group not found. Creating...
-                                for /f "tokens=*" %%i in ('aws ec2 create-security-group --group-name !SG_NAME! --description "Security group for Packer web server" --region !AWS_REGION! --query "GroupId" --output text') do set SG_ID=%%i
+                                for /f "tokens=*" %%i in ('call aws ec2 create-security-group --group-name !SG_NAME! --description "Security group for Packer web server" --region !AWS_REGION! --query "GroupId" --output text') do set SG_ID=%%i
                                 echo Created Security Group: !SG_ID!
                                 
                                 echo Authorizing SSH Port 22...
-                                aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 22 --cidr 0.0.0.0/0 --region !AWS_REGION!
+                                call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 22 --cidr 0.0.0.0/0 --region !AWS_REGION!
                                 echo Authorizing HTTP Port 80...
-                                aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 80 --cidr 0.0.0.0/0 --region !AWS_REGION!
+                                call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 80 --cidr 0.0.0.0/0 --region !AWS_REGION!
                             ) else (
                                 echo Using existing Security Group: !SG_ID!
                             )
@@ -291,7 +291,7 @@ pipeline {
                             if "${params.DISABLE_PUBLIC_IP}"=="true" set NO_PIP=--no-associate-public-ip-address
                             
                             echo Deploying instance with Security Group: !SG_ID!
-                            aws ec2 run-instances ^
+                            call aws ec2 run-instances ^
                               --image-id ${env.AMI_ID} ^
                               --instance-type ${params.INSTANCE_TYPE} ^
                               --region ${params.AWS_REGION} ^
@@ -310,10 +310,12 @@ pipeline {
                     steps {
                         withCredentials([file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS')]) {
                             bat """
+                            @echo off
                             setlocal enabledelayedexpansion
+                            set "PATH=%PATH%;C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin;%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin"
                             set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
                             
-                            gcloud compute instances create ${APP_NAME}-gcp ^
+                            call gcloud compute instances create ${APP_NAME}-gcp ^
                               --image=${env.GCP_IMAGE} ^
                               --image-project=${params.GCP_PROJECT} ^
                               --zone=${params.GCP_ZONE} ^
@@ -330,16 +332,18 @@ pipeline {
                     steps {
                         withCredentials([usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')]) {
                             bat """
+                            @echo off
                             setlocal enabledelayedexpansion
+                            set "PATH=%PATH%;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin"
                             set ARM_CLIENT_ID=%ARM_CLIENT_ID%
                             set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
                             set ARM_SUBSCRIPTION_ID=${params.AZURE_SUBSCRIPTION_ID}
                             set ARM_TENANT_ID=${params.AZURE_TENANT_ID}
                             
-                            az login --service-principal -u !ARM_CLIENT_ID! -p !ARM_CLIENT_SECRET! --tenant ${params.AZURE_TENANT_ID}
-                            az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                            call az login --service-principal -u !ARM_CLIENT_ID! -p !ARM_CLIENT_SECRET! --tenant ${params.AZURE_TENANT_ID}
+                            call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
                             
-                            az vm create ^
+                            call az vm create ^
                               --name ${APP_NAME}-azure ^
                               --image ${env.AZURE_IMAGE} ^
                               --resource-group ${params.AZURE_RESOURCE_GROUP} ^
