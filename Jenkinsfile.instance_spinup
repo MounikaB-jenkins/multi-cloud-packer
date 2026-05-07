@@ -60,17 +60,10 @@ def deployInstance() {
             set AWS_DEFAULT_REGION=${params.AWS_REGION}
             
             :: 1. Security Group Management
-            echo Checking Security Group: production-web-sg
-            set SG_ID=
             for /f "tokens=*" %%i in ('aws ec2 describe-security-groups --group-names production-web-sg --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
-            
             if "%SG_ID%"=="" (
-                echo Creating new Security Group...
                 for /f "tokens=*" %%i in ('aws ec2 create-security-group --group-name production-web-sg --description "Production Security Group" --query "GroupId" --output text') do set SG_ID=%%i
             )
-            echo Using Security Group ID: %SG_ID%
-
-            echo Authorizing SSH (22), HTTP (80) and ICMP (Ping)...
             aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 22 --cidr 0.0.0.0/0 2>nul
             aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 80 --cidr 0.0.0.0/0 2>nul
             aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol icmp --port -1 --cidr 0.0.0.0/0 2>nul
@@ -78,58 +71,80 @@ def deployInstance() {
             :: 2. Find Image
             set TARGET_IMAGE=${params.IMAGE_ID}
             if "%TARGET_IMAGE%"=="" (
-                echo Finding latest AMI...
                 for /f "tokens=*" %%i in ('aws ec2 describe-images --owners self --filters "Name=name,Values=multi-cloud-ubuntu-*" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text') do set TARGET_IMAGE=%%i
             )
-            echo Using Image ID: %TARGET_IMAGE%
 
-            :: 3. Launch Instance
+            :: 3. Launch
             set KEY_NAME=${params.SECRET_NAME.replace('-secret','')}
-            echo Launching instance with key: %KEY_NAME%
-            for /f "tokens=*" %%i in ('aws ec2 run-instances --image-id %TARGET_IMAGE% --instance-type t2.micro --security-group-ids %SG_ID% --key-name %KEY_NAME% --associate-public-ip-address --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=prod-instance}]" --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
-            
-            echo Waiting for instance %INST_ID% to reach 'running' state...
+            for /f "tokens=*" %%i in ('aws ec2 run-instances --image-id %TARGET_IMAGE% --instance-type t2.micro --security-group-ids %SG_ID% --key-name %KEY_NAME% --associate-public-ip-address --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
             aws ec2 wait instance-running --instance-ids %INST_ID%
-
-            echo Retrieving Public IP...
             for /f "tokens=*" %%i in ('aws ec2 describe-instances --instance-ids %INST_ID% --query "Reservations[0].Instances[0].PublicIpAddress" --output text') do set PUBLIC_IP=%%i
             
             echo TARGET_INSTANCE_ID=%INST_ID% > env.props
             echo PUBLIC_IP=%PUBLIC_IP% >> env.props
-            echo AWS Setup Complete. Instance: %INST_ID%, IP: %PUBLIC_IP%
             """
-            def props = readProperties file: 'env.props'
-            env.TARGET_INSTANCE_ID = props['TARGET_INSTANCE_ID']
-            env.PUBLIC_IP = props['PUBLIC_IP']
             break
             
         case 'GCP':
             bat """
+            @echo off
             set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
-            gcloud compute instances create prod-vm-${BUILD_NUMBER} ^
+            set INSTANCE_NAME=prod-vm-%BUILD_NUMBER%
+            
+            :: 1. Firewall Rules
+            echo Ensuring Firewall Rules...
+            gcloud compute firewall-rules create allow-ssh-http-icmp --allow tcp:22,tcp:80,icmp --target-tags=prod-web --project=${params.GCP_PROJECT} 2>nul
+            
+            :: 2. Launch
+            echo Launching GCP Instance...
+            gcloud compute instances create %INSTANCE_NAME% ^
                 --image=${params.IMAGE_ID} ^
                 --project=${params.GCP_PROJECT} ^
                 --zone=${params.GCP_ZONE} ^
                 --machine-type=e2-micro ^
-                --tags=http-server,https-server
+                --tags=prod-web ^
+                --format="get(networkInterfaces[0].accessConfigs[0].natIP)" > nat_ip.txt
+            
+            set /p PUBLIC_IP=<nat_ip.txt
+            echo TARGET_INSTANCE_ID=%INSTANCE_NAME% > env.props
+            echo PUBLIC_IP=%PUBLIC_IP% >> env.props
             """
             break
             
         case 'AZURE':
             bat """
+            @echo off
             set ARM_CLIENT_ID=%ARM_CLIENT_ID%
             set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
+            set VM_NAME=prod-vm-%BUILD_NUMBER%
+            
             az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
+            
+            :: 1. Launch
+            echo Launching Azure VM...
             az vm create ^
                 --resource-group ${params.AZURE_RESOURCE_GROUP} ^
-                --name prod-vm-${BUILD_NUMBER} ^
+                --name %VM_NAME% ^
                 --image ${params.IMAGE_ID} ^
                 --admin-username azureuser ^
-                --generate-ssh-keys false ^
-                --public-ip-sku Standard
+                --public-ip-sku Standard ^
+                --nsg-rule SSH ^
+                --query "{ip:publicIpAddress, id:id}" --output json > vm_info.json
+            
+            :: 2. Open Port 80
+            echo Opening Port 80...
+            az vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name %VM_NAME% --port 80
             """
+            // Extract IP from JSON
+            def vmInfo = readJSON file: 'vm_info.json'
+            env.TARGET_INSTANCE_ID = vmInfo.id
+            env.PUBLIC_IP = vmInfo.ip
+            return // Skip property reading
             break
     }
+    def props = readProperties file: 'env.props'
+    env.TARGET_INSTANCE_ID = props['TARGET_INSTANCE_ID']
+    env.PUBLIC_IP = props['PUBLIC_IP']
 }
 
 def stopInstance() {
