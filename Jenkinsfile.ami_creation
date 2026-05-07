@@ -178,7 +178,7 @@ pipeline {
                             set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
                             where az >nul 2>&1
                             if !ERRORLEVEL! neq 0 (
-                                echo ERROR: Azure CLI (az) not found. Checked common paths.
+                                echo ERROR: Azure CLI 'az' not found. Checked common paths.
                                 exit /b 1
                             )
                             call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
