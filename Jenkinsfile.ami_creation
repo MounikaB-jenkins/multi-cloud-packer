@@ -62,9 +62,34 @@ pipeline {
                         @echo off
                         setlocal enabledelayedexpansion
                         
-                        :: Ensure common paths are in PATH for Windows agents
-                        set "PATH=%PATH%;C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin;%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin"
-                        set "PATH=%PATH%;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin"
+                        echo [INFO] Searching for Cloud SDKs...
+                        
+                        :: Define common paths for gcloud
+                        set "GCP_SEARCH_PATHS=C:\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin;%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\bin;C:\\Program Files (x86)\\Google\\Cloud SDK\\bin"
+                        
+                        :: Define common paths for Azure CLI
+                        set "AZ_SEARCH_PATHS=C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\bin"
+
+                        :: Inject paths if tools are not found
+                        where gcloud >nul 2>&1
+                        if !ERRORLEVEL! neq 0 (
+                            for %%p in (%GCP_SEARCH_PATHS%) do (
+                                if exist "%%~p\\gcloud.cmd" (
+                                    set "PATH=!PATH!;%%~p"
+                                    echo [INFO] Found gcloud in %%~p
+                                )
+                            )
+                        )
+
+                        where az >nul 2>&1
+                        if !ERRORLEVEL! neq 0 (
+                            for %%p in (%AZ_SEARCH_PATHS%) do (
+                                if exist "%%~p\\az.cmd" (
+                                    set "PATH=!PATH!;%%~p"
+                                    echo [INFO] Found az in %%~p
+                                )
+                            )
+                        )
 
                         echo Generating SSH keypair...
                         ssh-keygen -t rsa -b 2048 -f private_key.pem -N ""
@@ -82,7 +107,7 @@ pipeline {
                             set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
                             where gcloud >nul 2>&1
                             if !ERRORLEVEL! neq 0 (
-                                echo ERROR: gcloud CLI not found in PATH.
+                                echo ERROR: gcloud CLI not found. Checked common paths.
                                 exit /b 1
                             )
                             call gcloud secrets create %KEY_NAME%-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} 2>nul
@@ -96,7 +121,7 @@ pipeline {
                             set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
                             where az >nul 2>&1
                             if !ERRORLEVEL! neq 0 (
-                                echo ERROR: Azure CLI (az) not found in PATH.
+                                echo ERROR: Azure CLI (az) not found. Checked common paths.
                                 exit /b 1
                             )
                             call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
@@ -116,45 +141,28 @@ pipeline {
                                 call az keyvault create --name ${params.AZURE_VAULT_NAME} --resource-group ${params.AZURE_RESOURCE_GROUP} --location ${params.AZURE_LOCATION} --enable-rbac-authorization true
                                 if !ERRORLEVEL! neq 0 (
                                     echo ERROR: Failed to create Key Vault '${params.AZURE_VAULT_NAME}'.
-                                    echo Note: Key Vault names must be GLOBALLY UNIQUE.
                                     exit /b 1
                                 )
                                 echo Waiting 30 seconds for DNS propagation...
                                 timeout /t 30 /nobreak
                             )
 
-                            :: Handle Permissions (Key Vault Secrets Officer)
-                            echo Verifying permissions for Service Principal...
+                            :: Handle Permissions
                             call az keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name "test-permission" --value "test" >nul 2>&1
                             if !ERRORLEVEL! neq 0 (
-                                echo [INFO] Service Principal lacks 'Key Vault Secrets Officer' role. Attempting to grant...
+                                echo [INFO] Service Principal lacks permission. Attempting to grant...
                                 for /f "tokens=*" %%i in ('az ad sp show --id %ARM_CLIENT_ID% --query id --output tsv 2^>nul') do set SP_OID=%%i
-                                if "!SP_OID!"=="" (
-                                    echo [WARN] Could not retrieve Service Principal Object ID.
-                                    echo Please manually run:
-                                    echo az role assignment create --role "Key Vault Secrets Officer" --assignee %ARM_CLIENT_ID% --scope /subscriptions/${params.AZURE_SUBSCRIPTION_ID}/resourceGroups/${params.AZURE_RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${params.AZURE_VAULT_NAME}
-                                ) else (
+                                if "!SP_OID!" neq "" (
                                     call az role assignment create --role "Key Vault Secrets Officer" --assignee !SP_OID! --scope /subscriptions/${params.AZURE_SUBSCRIPTION_ID}/resourceGroups/${params.AZURE_RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${params.AZURE_VAULT_NAME} >nul 2>&1
-                                    if !ERRORLEVEL! neq 0 (
-                                        echo [ERROR] Automated role assignment failed.
-                                        echo ACTION REQUIRED: Your Service Principal does not have permission to write secrets.
-                                        echo Please run this command as an Owner/Admin:
-                                        echo.
-                                        echo az role assignment create --role "Key Vault Secrets Officer" --assignee !SP_OID! --scope /subscriptions/${params.AZURE_SUBSCRIPTION_ID}/resourceGroups/${params.AZURE_RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${params.AZURE_VAULT_NAME}
-                                        echo.
-                                        exit /b 1
+                                    if !ERRORLEVEL! equ 0 (
+                                        echo [SUCCESS] Permission granted. Waiting for propagation...
+                                        timeout /t 20 /nobreak
                                     )
-                                    echo [SUCCESS] Permission granted. Waiting for propagation...
-                                    timeout /t 20 /nobreak
                                 )
                             )
                             
                             echo Storing secret...
                             call az keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name %KEY_NAME%-secret --file private_key.pem
-                            if !ERRORLEVEL! neq 0 (
-                                echo ERROR: Failed to set secret in vault. 
-                                exit /b 1
-                            )
                         )
                         """
                         env.AWS_PRIVATE_KEY_FILE = "${WORKSPACE}\\private_key.pem"
