@@ -14,8 +14,8 @@ pipeline {
         string(name: 'AZURE_TENANT_ID', defaultValue: '8344e416-02b8-4b70-a912-1995cc408f19', description: 'Azure tenant ID')
         string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for notification')
         booleanParam(name: 'BUILD_AWS', defaultValue: true, description: 'Build AWS AMI')
-        booleanParam(name: 'BUILD_GCP', defaultValue: false, description: 'Build GCP Image')
-        booleanParam(name: 'BUILD_AZURE', defaultValue: false, description: 'Build Azure Image')
+        booleanParam(name: 'BUILD_GCP', defaultValue: true, description: 'Build GCP Image')
+        booleanParam(name: 'BUILD_AZURE', defaultValue: true, description: 'Build Azure Image')
     }
 
     environment {
@@ -57,6 +57,7 @@ pipeline {
                         usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
                     ]) {
                         bat """
+                        @echo off
                         echo Generating SSH keypair...
                         ssh-keygen -t rsa -b 2048 -f private_key.pem -N ""
                         
@@ -68,18 +69,22 @@ pipeline {
                         aws secretsmanager create-secret --name %KEY_NAME%-secret --secret-string file://private_key.pem --region ${params.AWS_REGION}
                         
                         :: GCP Storage
-                        echo Storing key in GCP Secret Manager...
-                        set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
-                        gcloud secrets create %KEY_NAME%-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} || echo Secret already exists
-                        gcloud secrets versions add %KEY_NAME%-secret --data-file=private_key.pem --project=${params.GCP_PROJECT}
+                        if "${params.BUILD_GCP}"=="true" (
+                            echo Storing key in GCP Secret Manager...
+                            set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
+                            call gcloud secrets create %KEY_NAME%-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} 2>nul
+                            call gcloud secrets versions add %KEY_NAME%-secret --data-file=private_key.pem --project=${params.GCP_PROJECT}
+                        )
                         
                         :: Azure Storage
-                        echo Storing key in Azure Key Vault...
-                        set ARM_CLIENT_ID=%ARM_CLIENT_ID%
-                        set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
-                        az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
-                        az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
-                        az keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name %KEY_NAME%-secret --file private_key.pem
+                        if "${params.BUILD_AZURE}"=="true" (
+                            echo Storing key in Azure Key Vault...
+                            set ARM_CLIENT_ID=%ARM_CLIENT_ID%
+                            set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
+                            call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
+                            call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                            call az keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name %KEY_NAME%-secret --file private_key.pem
+                        )
                         """
                         env.AWS_PRIVATE_KEY_FILE = "${WORKSPACE}\\private_key.pem"
                     }
