@@ -112,31 +112,28 @@ pipeline {
                         setlocal enabledelayedexpansion
                         
                         echo [INFO] Searching for Cloud SDKs...
-                        
-                        :: Define common paths for gcloud
-                        set "GCP_SEARCH_PATHS="C:\\google-cloud-sdk\\bin" "C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "C:\\Program Files\\Google\\Cloud SDK\\bin" "C:\\Program Files (x86)\\Google\\Cloud SDK\\bin""
-                        
-                        :: Define common paths for Azure CLI
-                        set "AZ_SEARCH_PATHS="C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin" "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin" "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin" "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\bin""
 
-                        :: Inject paths if tools are not found
+                        :: Find gcloud executable
+                        set "GCLOUD_EXE="
                         where gcloud >nul 2>&1
-                        if !ERRORLEVEL! neq 0 (
+                        if !ERRORLEVEL! equ 0 (
+                            set "GCLOUD_EXE=gcloud"
+                        ) else (
+                            set "GCP_SEARCH_PATHS="C:\\Users\\vresh\\AppData\\Local\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin""
                             for %%p in (%GCP_SEARCH_PATHS%) do (
-                                if exist "%%~p\\gcloud.cmd" (
-                                    set "PATH=!PATH!;%%~p"
-                                    echo [INFO] Found gcloud in %%~p
-                                )
+                                if exist "%%~p\\gcloud.cmd" if "!GCLOUD_EXE!"=="" set "GCLOUD_EXE=%%~p\\gcloud.cmd"
                             )
                         )
 
+                        :: Find az executable
+                        set "AZ_EXE="
                         where az >nul 2>&1
-                        if !ERRORLEVEL! neq 0 (
+                        if !ERRORLEVEL! equ 0 (
+                            set "AZ_EXE=az"
+                        ) else (
+                            set "AZ_SEARCH_PATHS="C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin" "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin""
                             for %%p in (%AZ_SEARCH_PATHS%) do (
-                                if exist "%%~p\\az.cmd" (
-                                    set "PATH=!PATH!;%%~p"
-                                    echo [INFO] Found az in %%~p
-                                )
+                                if exist "%%~p\\az.cmd" if "!AZ_EXE!"=="" set "AZ_EXE=%%~p\\az.cmd"
                             )
                         )
 
@@ -150,8 +147,8 @@ pipeline {
                             echo Storing key in AWS Secrets Manager...
                             set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
                             set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
-                        call aws ec2 import-key-pair --key-name %KEY_NAME% --public-key-material fileb://private_key.pem.pub --region ${env.AWS_REGION}
-                        call aws secretsmanager create-secret --name %KEY_NAME%-secret --secret-string file://private_key.pem --region ${env.AWS_REGION}
+                            call aws ec2 import-key-pair --key-name %KEY_NAME% --public-key-material fileb://private_key.pem.pub --region ${env.AWS_REGION}
+                            call aws secretsmanager create-secret --name %KEY_NAME%-secret --secret-string file://private_key.pem --region ${env.AWS_REGION}
                         )
                         
                         :: GCP Storage
@@ -159,14 +156,13 @@ pipeline {
                         if "${params.CLOUD_PROVIDER}"=="GCP" set RUN_GCP=true
                         if "!RUN_GCP!"=="true" (
                             echo Storing key in GCP Secret Manager...
-                            set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
-                            where gcloud >nul 2>&1
-                            if !ERRORLEVEL! neq 0 (
+                            if "!GCLOUD_EXE!"=="" (
                                 echo ERROR: gcloud CLI not found. Checked common paths.
                                 exit /b 1
                             )
-                        call gcloud secrets create %KEY_NAME%-secret --replication-policy="automatic" --project=${env.GCP_PROJECT} 2>nul
-                        call gcloud secrets versions add %KEY_NAME%-secret --data-file=private_key.pem --project=${env.GCP_PROJECT}
+                            set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
+                            call "!GCLOUD_EXE!" secrets create %KEY_NAME%-secret --replication-policy="automatic" --project=${env.GCP_PROJECT} 2>nul
+                            call "!GCLOUD_EXE!" secrets versions add %KEY_NAME%-secret --data-file=private_key.pem --project=${env.GCP_PROJECT}
                         )
                         
                         :: Azure Storage
@@ -174,30 +170,29 @@ pipeline {
                         if "${params.CLOUD_PROVIDER}"=="AZURE" set RUN_AZURE=true
                         if "!RUN_AZURE!"=="true" (
                             echo Storing key in Azure Key Vault...
-                            set ARM_CLIENT_ID=%ARM_CLIENT_ID%
-                            set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
-                            where az >nul 2>&1
-                            if !ERRORLEVEL! neq 0 (
+                            if "!AZ_EXE!"=="" (
                                 echo ERROR: Azure CLI 'az' not found. Checked common paths.
                                 exit /b 1
                             )
-                            call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
-                            call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                            set ARM_CLIENT_ID=%ARM_CLIENT_ID%
+                            set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
+                            call "!AZ_EXE!" login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${env.AZURE_TENANT_ID}
+                            call "!AZ_EXE!" account set --subscription ${env.AZURE_SUBSCRIPTION_ID}
                             
                             :: Ensure Resource Group exists
-                            call az group show --name ${params.AZURE_RESOURCE_GROUP} >nul 2>&1
+                            call "!AZ_EXE!" group show --name ${env.AZURE_RESOURCE_GROUP} >nul 2>&1
                             if !ERRORLEVEL! neq 0 (
-                                echo Creating Resource Group: ${params.AZURE_RESOURCE_GROUP}
-                                call az group create --name ${params.AZURE_RESOURCE_GROUP} --location ${params.AZURE_LOCATION}
+                                echo Creating Resource Group: ${env.AZURE_RESOURCE_GROUP}
+                                call "!AZ_EXE!" group create --name ${env.AZURE_RESOURCE_GROUP} --location ${env.AZURE_LOCATION}
                             )
 
                             :: Ensure Vault exists
-                            call az keyvault show --name ${params.AZURE_VAULT_NAME} >nul 2>&1
+                            call "!AZ_EXE!" keyvault show --name ${env.AZURE_VAULT_NAME} >nul 2>&1
                             if !ERRORLEVEL! neq 0 (
-                                echo Creating Key Vault: ${params.AZURE_VAULT_NAME}
-                                call az keyvault create --name ${params.AZURE_VAULT_NAME} --resource-group ${params.AZURE_RESOURCE_GROUP} --location ${params.AZURE_LOCATION} --enable-rbac-authorization true
+                                echo Creating Key Vault: ${env.AZURE_VAULT_NAME}
+                                call "!AZ_EXE!" keyvault create --name ${env.AZURE_VAULT_NAME} --resource-group ${env.AZURE_RESOURCE_GROUP} --location ${env.AZURE_LOCATION} --enable-rbac-authorization true
                                 if !ERRORLEVEL! neq 0 (
-                                    echo ERROR: Failed to create Key Vault '${params.AZURE_VAULT_NAME}'.
+                                    echo ERROR: Failed to create Key Vault '${env.AZURE_VAULT_NAME}'.
                                     exit /b 1
                                 )
                                 echo Waiting 30 seconds for DNS propagation...
@@ -205,12 +200,12 @@ pipeline {
                             )
 
                             :: Handle Permissions
-                        call az keyvault secret set --vault-name ${env.AZURE_VAULT_NAME} --name "test-permission" --value "test" >nul 2>&1
+                            call "!AZ_EXE!" keyvault secret set --vault-name ${env.AZURE_VAULT_NAME} --name "test-permission" --value "test" >nul 2>&1
                             if !ERRORLEVEL! neq 0 (
                                 echo [INFO] Service Principal lacks permission. Attempting to grant...
-                                for /f "tokens=*" %%i in ('az ad sp show --id %ARM_CLIENT_ID% --query id --output tsv 2^>nul') do set SP_OID=%%i
+                                for /f "tokens=*" %%i in ('"!AZ_EXE!" ad sp show --id %ARM_CLIENT_ID% --query id --output tsv 2^>nul') do set SP_OID=%%i
                                 if "!SP_OID!" neq "" (
-                                call az role assignment create --role "Key Vault Secrets Officer" --assignee !SP_OID! --scope /subscriptions/${env.AZURE_SUBSCRIPTION_ID}/resourceGroups/${env.AZURE_RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${env.AZURE_VAULT_NAME} >nul 2>&1
+                                    call "!AZ_EXE!" role assignment create --role "Key Vault Secrets Officer" --assignee !SP_OID! --scope /subscriptions/${env.AZURE_SUBSCRIPTION_ID}/resourceGroups/${env.AZURE_RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${env.AZURE_VAULT_NAME} >nul 2>&1
                                     if !ERRORLEVEL! equ 0 (
                                         echo [SUCCESS] Permission granted. Waiting for propagation...
                                         timeout /t 20 /nobreak
@@ -219,7 +214,7 @@ pipeline {
                             )
                             
                             echo Storing secret...
-                        call az keyvault secret set --vault-name ${env.AZURE_VAULT_NAME} --name %KEY_NAME%-secret --file private_key.pem
+                            call "!AZ_EXE!" keyvault secret set --vault-name ${env.AZURE_VAULT_NAME} --name %KEY_NAME%-secret --file private_key.pem
                         )
                         """
                         env.AWS_PRIVATE_KEY_FILE = "${WORKSPACE}\\private_key.pem"
