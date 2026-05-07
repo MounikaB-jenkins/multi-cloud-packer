@@ -4,19 +4,9 @@ pipeline {
     agent any
 
     parameters {
+        choice(name: 'CLOUD_PROVIDER', choices: ['ALL', 'AWS', 'GCP', 'AZURE'], description: 'Select cloud provider(s) to build images for')
         string(name: 'IMAGE_NAME', defaultValue: 'multi-cloud-ubuntu', description: 'Name for the Packer image')
-        string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region')
-        string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID')
-        string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone')
-        string(name: 'AZURE_LOCATION', defaultValue: 'eastus', description: 'Azure region for resource creation')
-        string(name: 'AZURE_VAULT_NAME', defaultValue: 'packer-vault', description: 'Azure Key Vault name')
-        string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group')
-        string(name: 'AZURE_SUBSCRIPTION_ID', defaultValue: 'b943e408-73c1-4cea-b780-689120606f67', description: 'Azure subscription ID')
-        string(name: 'AZURE_TENANT_ID', defaultValue: '8344e416-02b8-4b70-a912-1995cc408f19', description: 'Azure tenant ID')
         string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for notification')
-        booleanParam(name: 'BUILD_AWS', defaultValue: true, description: 'Build AWS AMI')
-        booleanParam(name: 'BUILD_GCP', defaultValue: true, description: 'Build GCP Image')
-        booleanParam(name: 'BUILD_AZURE', defaultValue: true, description: 'Build Azure Image')
     }
 
     environment {
@@ -24,6 +14,65 @@ pipeline {
     }
 
     stages {
+        stage('Gather Cloud Parameters') {
+            steps {
+                script {
+                    // Initialize default environment variables to avoid nulls
+                    env.AWS_REGION = 'us-east-1'
+                    env.GCP_PROJECT = 'packer-demo-456789'
+                    env.GCP_ZONE = 'us-central1-a'
+                    env.AZURE_LOCATION = 'eastus'
+                    env.AZURE_VAULT_NAME = 'packer-vault'
+                    env.AZURE_RESOURCE_GROUP = 'packer-resources'
+                    env.AZURE_SUBSCRIPTION_ID = 'b943e408-73c1-4cea-b780-689120606f67'
+                    env.AZURE_TENANT_ID = '8344e416-02b8-4b70-a912-1995cc408f19'
+
+                    if (params.CLOUD_PROVIDER == 'AWS' || params.CLOUD_PROVIDER == 'ALL') {
+                        def awsParams = input(
+                            id: 'aws-input',
+                            message: 'Provide AWS Configuration',
+                            parameters: [
+                                string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region')
+                            ]
+                        )
+                        env.AWS_REGION = awsParams
+                    }
+
+                    if (params.CLOUD_PROVIDER == 'GCP' || params.CLOUD_PROVIDER == 'ALL') {
+                        def gcpParams = input(
+                            id: 'gcp-input',
+                            message: 'Provide GCP Configuration',
+                            parameters: [
+                                string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID'),
+                                string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone')
+                            ]
+                        )
+                        env.GCP_PROJECT = gcpParams['GCP_PROJECT']
+                        env.GCP_ZONE = gcpParams['GCP_ZONE']
+                    }
+
+                    if (params.CLOUD_PROVIDER == 'AZURE' || params.CLOUD_PROVIDER == 'ALL') {
+                        def azureParams = input(
+                            id: 'azure-input',
+                            message: 'Provide Azure Configuration',
+                            parameters: [
+                                string(name: 'AZURE_LOCATION', defaultValue: 'eastus', description: 'Azure region for resource creation'),
+                                string(name: 'AZURE_VAULT_NAME', defaultValue: 'packer-vault', description: 'Azure Key Vault name'),
+                                string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group'),
+                                string(name: 'AZURE_SUBSCRIPTION_ID', defaultValue: 'b943e408-73c1-4cea-b780-689120606f67', description: 'Azure subscription ID'),
+                                string(name: 'AZURE_TENANT_ID', defaultValue: '8344e416-02b8-4b70-a912-1995cc408f19', description: 'Azure tenant ID')
+                            ]
+                        )
+                        env.AZURE_LOCATION = azureParams['AZURE_LOCATION']
+                        env.AZURE_VAULT_NAME = azureParams['AZURE_VAULT_NAME']
+                        env.AZURE_RESOURCE_GROUP = azureParams['AZURE_RESOURCE_GROUP']
+                        env.AZURE_SUBSCRIPTION_ID = azureParams['AZURE_SUBSCRIPTION_ID']
+                        env.AZURE_TENANT_ID = azureParams['AZURE_TENANT_ID']
+                    }
+                }
+            }
+        }
+
         stage('Checkout') {
             steps {
                 deleteDir()
@@ -65,10 +114,10 @@ pipeline {
                         echo [INFO] Searching for Cloud SDKs...
                         
                         :: Define common paths for gcloud
-                        set "GCP_SEARCH_PATHS=C:\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin;%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\bin;C:\\Program Files (x86)\\Google\\Cloud SDK\\bin"
+                        set "GCP_SEARCH_PATHS="C:\\google-cloud-sdk\\bin" "C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "C:\\Program Files\\Google\\Cloud SDK\\bin" "C:\\Program Files (x86)\\Google\\Cloud SDK\\bin""
                         
                         :: Define common paths for Azure CLI
-                        set "AZ_SEARCH_PATHS=C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\bin"
+                        set "AZ_SEARCH_PATHS="C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin" "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin" "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin" "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\bin""
 
                         :: Inject paths if tools are not found
                         where gcloud >nul 2>&1
@@ -95,14 +144,20 @@ pipeline {
                         ssh-keygen -t rsa -b 2048 -f private_key.pem -N ""
                         
                         :: AWS Storage
-                        echo Storing key in AWS Secrets Manager...
-                        set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
-                        set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
-                        call aws ec2 import-key-pair --key-name %KEY_NAME% --public-key-material fileb://private_key.pem.pub --region ${params.AWS_REGION}
-                        call aws secretsmanager create-secret --name %KEY_NAME%-secret --secret-string file://private_key.pem --region ${params.AWS_REGION}
+                        if "${params.CLOUD_PROVIDER}"=="ALL" set RUN_AWS=true
+                        if "${params.CLOUD_PROVIDER}"=="AWS" set RUN_AWS=true
+                        if "!RUN_AWS!"=="true" (
+                            echo Storing key in AWS Secrets Manager...
+                            set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
+                            set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
+                        call aws ec2 import-key-pair --key-name %KEY_NAME% --public-key-material fileb://private_key.pem.pub --region ${env.AWS_REGION}
+                        call aws secretsmanager create-secret --name %KEY_NAME%-secret --secret-string file://private_key.pem --region ${env.AWS_REGION}
+                        )
                         
                         :: GCP Storage
-                        if "${params.BUILD_GCP}"=="true" (
+                        if "${params.CLOUD_PROVIDER}"=="ALL" set RUN_GCP=true
+                        if "${params.CLOUD_PROVIDER}"=="GCP" set RUN_GCP=true
+                        if "!RUN_GCP!"=="true" (
                             echo Storing key in GCP Secret Manager...
                             set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
                             where gcloud >nul 2>&1
@@ -110,12 +165,14 @@ pipeline {
                                 echo ERROR: gcloud CLI not found. Checked common paths.
                                 exit /b 1
                             )
-                            call gcloud secrets create %KEY_NAME%-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} 2>nul
-                            call gcloud secrets versions add %KEY_NAME%-secret --data-file=private_key.pem --project=${params.GCP_PROJECT}
+                        call gcloud secrets create %KEY_NAME%-secret --replication-policy="automatic" --project=${env.GCP_PROJECT} 2>nul
+                        call gcloud secrets versions add %KEY_NAME%-secret --data-file=private_key.pem --project=${env.GCP_PROJECT}
                         )
                         
                         :: Azure Storage
-                        if "${params.BUILD_AZURE}"=="true" (
+                        if "${params.CLOUD_PROVIDER}"=="ALL" set RUN_AZURE=true
+                        if "${params.CLOUD_PROVIDER}"=="AZURE" set RUN_AZURE=true
+                        if "!RUN_AZURE!"=="true" (
                             echo Storing key in Azure Key Vault...
                             set ARM_CLIENT_ID=%ARM_CLIENT_ID%
                             set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
@@ -148,12 +205,12 @@ pipeline {
                             )
 
                             :: Handle Permissions
-                            call az keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name "test-permission" --value "test" >nul 2>&1
+                        call az keyvault secret set --vault-name ${env.AZURE_VAULT_NAME} --name "test-permission" --value "test" >nul 2>&1
                             if !ERRORLEVEL! neq 0 (
                                 echo [INFO] Service Principal lacks permission. Attempting to grant...
                                 for /f "tokens=*" %%i in ('az ad sp show --id %ARM_CLIENT_ID% --query id --output tsv 2^>nul') do set SP_OID=%%i
                                 if "!SP_OID!" neq "" (
-                                    call az role assignment create --role "Key Vault Secrets Officer" --assignee !SP_OID! --scope /subscriptions/${params.AZURE_SUBSCRIPTION_ID}/resourceGroups/${params.AZURE_RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${params.AZURE_VAULT_NAME} >nul 2>&1
+                                call az role assignment create --role "Key Vault Secrets Officer" --assignee !SP_OID! --scope /subscriptions/${env.AZURE_SUBSCRIPTION_ID}/resourceGroups/${env.AZURE_RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${env.AZURE_VAULT_NAME} >nul 2>&1
                                     if !ERRORLEVEL! equ 0 (
                                         echo [SUCCESS] Permission granted. Waiting for propagation...
                                         timeout /t 20 /nobreak
@@ -162,7 +219,7 @@ pipeline {
                             )
                             
                             echo Storing secret...
-                            call az keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name %KEY_NAME%-secret --file private_key.pem
+                        call az keyvault secret set --vault-name ${env.AZURE_VAULT_NAME} --name %KEY_NAME%-secret --file private_key.pem
                         )
                         """
                         env.AWS_PRIVATE_KEY_FILE = "${WORKSPACE}\\private_key.pem"
@@ -175,9 +232,9 @@ pipeline {
             steps {
                 script {
                     def onlyTargets = []
-                    if (params.BUILD_AWS) onlyTargets.add("amazon-ebs.aws_linux")
-                    if (params.BUILD_GCP) onlyTargets.add("googlecompute.gcp_linux")
-                    if (params.BUILD_AZURE) onlyTargets.add("azure-arm.azure_linux")
+                        if (params.CLOUD_PROVIDER == 'ALL' || params.CLOUD_PROVIDER == 'AWS') onlyTargets.add("amazon-ebs.aws_linux")
+                        if (params.CLOUD_PROVIDER == 'ALL' || params.CLOUD_PROVIDER == 'GCP') onlyTargets.add("googlecompute.gcp_linux")
+                        if (params.CLOUD_PROVIDER == 'ALL' || params.CLOUD_PROVIDER == 'AZURE') onlyTargets.add("azure-arm.azure_linux")
                     
                     if (onlyTargets.isEmpty()) error "No clouds selected for build."
                     
@@ -198,14 +255,14 @@ pipeline {
                         
                         packer.exe build ^
                             -var "image_name=${params.IMAGE_NAME}" ^
-                            -var "region=${params.AWS_REGION}" ^
+                            -var "region=${env.AWS_REGION}" ^
                             -var "aws_key_name=%KEY_NAME%" ^
                             -var "aws_private_key_file=%AWS_PRIVATE_KEY_FILE%" ^
-                            -var "gcp_project=${params.GCP_PROJECT}" ^
-                            -var "gcp_zone=${params.GCP_ZONE}" ^
-                            -var "azure_resource_group=${params.AZURE_RESOURCE_GROUP}" ^
-                            -var "azure_subscription_id=${params.AZURE_SUBSCRIPTION_ID}" ^
-                            -var "azure_tenant_id=${params.AZURE_TENANT_ID}" ^
+                            -var "gcp_project=${env.GCP_PROJECT}" ^
+                            -var "gcp_zone=${env.GCP_ZONE}" ^
+                            -var "azure_resource_group=${env.AZURE_RESOURCE_GROUP}" ^
+                            -var "azure_subscription_id=${env.AZURE_SUBSCRIPTION_ID}" ^
+                            -var "azure_tenant_id=${env.AZURE_TENANT_ID}" ^
                             -var "azure_client_id=%ARM_CLIENT_ID%" ^
                             -var "azure_client_secret=%ARM_CLIENT_SECRET%" ^
                             ${onlyFlag} ^
