@@ -12,6 +12,7 @@ pipeline {
         string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone.')
         string(name: 'AZURE_VAULT_NAME', defaultValue: 'my-key-vault', description: 'Azure Key Vault name.')
         string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group.')
+        string(name: 'AZURE_SUBSCRIPTION_ID', defaultValue: 'b943e408-73c1-4cea-b780-689120606f67', description: 'Azure subscription ID')
         string(name: 'AZURE_TENANT_ID', defaultValue: '8344e416-02b8-4b70-a912-1995cc408f19', description: 'Azure tenant ID.')
         string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for notification.')
     }
@@ -119,6 +120,7 @@ def deployInstance() {
             set VM_NAME=prod-vm-%BUILD_NUMBER%
             
             az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
+            az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
             
             :: 1. Launch
             echo Launching Azure VM...
@@ -156,7 +158,16 @@ def stopInstance() {
             bat "gcloud compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}"
             break
         case 'AZURE':
-            bat "az vm stop --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}"
+            withCredentials([usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')]) {
+                bat """
+                @echo off
+                set ARM_CLIENT_ID=%ARM_CLIENT_ID%
+                set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
+                az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
+                az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                az vm stop --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}
+                """
+            }
             break
     }
 }
