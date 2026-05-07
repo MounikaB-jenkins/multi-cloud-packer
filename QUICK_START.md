@@ -81,12 +81,13 @@ AZURE_TENANT_ID = your-azure-tenant-id
 ### Step 5: Run the Pipeline
 1. Open the job: `multi-cloud-packer-pipeline`
 2. Click **Build with Parameters**
-3. Adjust parameters as needed:
-   - `IMAGE_NAME`: Name for your image
-   - `AWS_REGION`: AWS region
-   - Toggle `BUILD_AWS`, `BUILD_GCP`, `BUILD_AZURE` based on needs
-   - Toggle `DEPLOY_AWS`, `DEPLOY_GCP`, `DEPLOY_AZURE` for deployments
+3. Select the `ACTION` (e.g., `BUILD`) and `CLOUD` (e.g., `AWS`).
+4. Fill in the required parameters for your chosen action. The parameter descriptions will guide you.
+   - For `BUILD`: Set `IMAGE_NAME` and `IMAGE_TYPE`.
+   - For `DEPLOY`: Provide the `IMAGE_ID` and `SECRET_NAME` from a previous build.
+   - For `STOP`: Provide the `INSTANCE_ID`.
 4. Click **Build**
+
 
 ---
 
@@ -224,4 +225,3 @@ After successful first run:
 - **AWS Packer Plugin**: https://www.packer.io/plugins/builders/amazon
 - **GCP Packer Plugin**: https://www.packer.io/plugins/builders/googlecompute
 - **Azure Packer Plugin**: https://www.packer.io/plugins/builders/azure
-

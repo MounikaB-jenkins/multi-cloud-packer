@@ -49,9 +49,9 @@ See **[QUICK_START.md](QUICK_START.md)** for step-by-step instructions.
 1. Open Jenkins → Job: `multi-cloud-packer-pipeline`
 2. Click **Build with Parameters**
 3. Configure parameters:
-   - `IMAGE_NAME`: e.g., `multi-cloud-ubuntu`
-   - `BUILD_AWS`, `BUILD_GCP`, `BUILD_AZURE`: Enable providers
-   - `DEPLOY_*`: Enable deployments
+   - `ACTION`: Choose `BUILD`, `DEPLOY`, or `STOP`.
+   - `CLOUD`: Choose `AWS`, `GCP`, or `AZURE`.
+   - Fill in other parameters as required by the action.
 4. Click **Build**
 
 ---
@@ -97,20 +97,16 @@ Deploys instances to cloud providers:
 
 ## 📊 Pipeline Parameters
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `IMAGE_NAME` | String | multi-cloud-ubuntu | Image name across clouds |
-| `AWS_REGION` | String | us-east-1 | AWS region |
-| `GCP_PROJECT` | String | packer-demo-456789 | GCP project ID |
-| `GCP_ZONE` | String | us-central1-a | GCP zone |
-| `AZURE_LOCATION` | String | East US | Azure region |
-| `AZURE_RESOURCE_GROUP` | String | packer-resources | Azure resource group |
-| `BUILD_AWS` | Boolean | true | Build AWS image |
-| `BUILD_GCP` | Boolean | true | Build GCP image |
-| `BUILD_AZURE` | Boolean | true | Build Azure image |
-| `DEPLOY_AWS` | Boolean | true | Deploy AWS instance |
-| `DEPLOY_GCP` | Boolean | true | Deploy GCP instance |
-| `DEPLOY_AZURE` | Boolean | true | Deploy Azure instance |
+| Parameter | Type | Description |
+|---|---|---|
+| `ACTION` | Choice | The action to perform: `BUILD`, `DEPLOY`, or `STOP`. |
+| `CLOUD` | Choice | The target cloud provider: `AWS`, `GCP`, or `AZURE`. |
+| `IMAGE_NAME` | String | Name for the new image (for BUILD action). |
+| `IMAGE_TYPE` | Choice | `Linux` or `Windows` (for BUILD action). |
+| `IMAGE_ID` | String | ID of the image to deploy (for DEPLOY action). |
+| `INSTANCE_ID` | String | ID of the instance to stop (for STOP action). |
+| `SECRET_NAME` | String | Name of the secret containing the SSH key (for DEPLOY action). |
+| `*_REGION`, `*_PROJECT`, etc. | String | Cloud-specific configuration values. |
 
 ---
 
@@ -277,4 +273,3 @@ Mounika B (MounikaB-jenkins)
    - Add additional provisioners in Packer template
    - Run security scanning post-build
    - Use AWS Systems Manager for patching
-

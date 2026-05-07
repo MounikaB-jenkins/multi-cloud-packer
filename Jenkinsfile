@@ -1,400 +1,292 @@
-def PACKER = 'C:\\DevopsProject\\packer.exe'
-
 pipeline {
     agent any
 
     parameters {
-        string(name: 'IMAGE_NAME', defaultValue: 'multi-cloud-ubuntu', description: 'Name for the Packer image')
-        choice(name: 'IMAGE_TYPE', choices: ['Linux', 'Windows'], description: 'Operating system type')
-        string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region')
-        string(name: 'AWS_KEY_NAME', defaultValue: 'my-aws-key', description: 'Existing AWS Key Pair name')
-        string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone')
-        string(name: 'AZURE_LOCATION', defaultValue: 'West Europe', description: 'Azure region')
-        string(name: 'INSTANCE_TYPE', defaultValue: 't2.micro', description: 'AWS instance type')
-        choice(name: 'INSTANCE_MODE', choices: ['General', 'Spot'], description: 'Instance type: General or Spot')
-        booleanParam(name: 'DISABLE_PUBLIC_IP', defaultValue: false, description: 'Disable public IP assignment')
+        choice(name: 'ACTION', choices: ['BUILD', 'DEPLOY', 'STOP'], description: 'The action to perform: BUILD a new image, DEPLOY an instance from an image, or STOP a running instance.')
+        choice(name: 'CLOUD', choices: ['AWS', 'GCP', 'AZURE'], description: 'The target cloud provider.')
+        
+        // Build Parameters
+        string(name: 'IMAGE_NAME', defaultValue: 'multi-cloud-image', description: 'Name for the Packer image (used for BUILD action).')
+        choice(name: 'IMAGE_TYPE', choices: ['Linux', 'Windows'], description: 'Operating system type (used for BUILD action).')
+
+        // Deploy/Stop Parameters
+        string(name: 'IMAGE_ID', defaultValue: '', description: 'The Image ID to launch (AMI ID, GCP Image Name, Azure Image ID). Required for DEPLOY action.')
+        string(name: 'INSTANCE_ID', defaultValue: '', description: 'The ID of the instance to stop. Required for STOP action.')
+        string(name: 'SECRET_NAME', defaultValue: '', description: 'The name of the secret holding the SSH key (e.g., prod-key-1-secret). Required for DEPLOY action.')
+
+        // Cloud Configuration
+        string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region for all operations.')
         string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID')
+        string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone for all operations.')
         string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group')
+        string(name: 'AZURE_LOCATION', defaultValue: 'East US', description: 'Azure location for all operations.')
+        string(name: 'AZURE_VAULT_NAME', defaultValue: 'packer-vault', description: 'Azure Key Vault name for storing/retrieving secrets.')
         string(name: 'AZURE_SUBSCRIPTION_ID', defaultValue: 'b943e408-73c1-4cea-b780-689120606f67', description: 'Azure subscription ID')
         string(name: 'AZURE_TENANT_ID', defaultValue: '8344e416-02b8-4b70-a912-1995cc408f19', description: 'Azure tenant ID')
+        
+        // Notifications
         string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for instance status notification')
-        booleanParam(name: 'BUILD_AWS', defaultValue: true, description: 'Build AWS AMI')
-        booleanParam(name: 'BUILD_GCP', defaultValue: false, description: 'Build GCP Image')
-        booleanParam(name: 'BUILD_AZURE', defaultValue: false, description: 'Build Azure Image')
-        booleanParam(name: 'DEPLOY_AWS', defaultValue: true, description: 'Deploy AWS EC2 Instance')
-        booleanParam(name: 'DEPLOY_GCP', defaultValue: false, description: 'Deploy GCP VM')
-        booleanParam(name: 'DEPLOY_AZURE', defaultValue: false, description: 'Deploy Azure VM')
     }
 
     environment {
         PACKER_TEMPLATE = 'aws-ubuntu.pkr.hcl'
-        APP_NAME = 'multi-cloud-nginx'
-        ENV = 'dev'
-        OWNER = 'jenkins'
-        AZURE_SUBSCRIPTION_ID = "${params.AZURE_SUBSCRIPTION_ID}"
-        AZURE_TENANT_ID = "${params.AZURE_TENANT_ID}"
+        PACKER_EXE = 'packer.exe'
     }
 
     stages {
         stage('Checkout') {
             steps {
                 deleteDir()
-                git branch: 'main',
-                      credentialsId: 'github-token',
-                      url: 'https://github.com/MounikaB-jenkins/multi-cloud-packer.git'
+                git branch: 'main', credentialsId: 'github-token', url: 'https://github.com/MounikaB-jenkins/multi-cloud-packer.git'
             }
         }
 
-        stage('Init & Validate') {
-            steps {
-                bat """
-                @echo off
-                if exist "C:\\DevopsProject\\packer.exe" (
-                    copy /Y "C:\\DevopsProject\\packer.exe" .\\packer.exe
-                ) else (
-                    echo ERROR: Packer executable not found at C:\\DevopsProject\\packer.exe
-                    exit /b 1
-                )
-                packer.exe init .
-                packer.exe validate ${PACKER_TEMPLATE}
-                """
-            }
-        }
-
-        stage('Setup AWS Key Pair') {
-            when { expression { params.BUILD_AWS || params.DEPLOY_AWS } }
-            steps {
-                withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
-                    script {
-                        env.AWS_KEY_NAME = "packer-${BUILD_NUMBER}"
-                        bat """
-                        @echo off
-                        setlocal enabledelayedexpansion
-                        set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
-                        set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
-                        
-                        echo Creating key-pair: %AWS_KEY_NAME%
-                        call aws ec2 create-key-pair --key-name ${env.AWS_KEY_NAME} --region ${params.AWS_REGION} --query "KeyMaterial" --output text > private_key.pem
-                        if %ERRORLEVEL% neq 0 (
-                            echo Failed to create key-pair
-                            exit /b %ERRORLEVEL%
-                        )
-
-                        echo Storing key-pair in AWS Secrets Manager...
-                        call aws secretsmanager create-secret --name ${env.AWS_KEY_NAME}-secret --description "Packer build key-pair for build ${BUILD_NUMBER}" --secret-string file://private_key.pem --region ${params.AWS_REGION}
-                        if %ERRORLEVEL% neq 0 (
-                            echo Failed to store secret in Secrets Manager
-                            del private_key.pem
-                            exit /b %ERRORLEVEL%
-                        )
-
-                        echo Key-pair setup complete. Private key retained for build.
-                        set AWS_PRIVATE_KEY_FILE=%cd%\\private_key.pem
-                        echo AWS_PRIVATE_KEY_FILE=!AWS_PRIVATE_KEY_FILE!
-                        """
-                        env.AWS_PRIVATE_KEY_FILE = "${WORKSPACE}\\private_key.pem"
-                    }
-                }
-            }
-        }
-
-        stage('Build Images') {
+        stage('Execute Action') {
             steps {
                 script {
-                    try {
-                        def vars = [
-                            "-var \"image_name=${params.IMAGE_NAME}\"",
-                            "-var \"region=${params.AWS_REGION}\"",
-                            "-var \"aws_key_name=${env.AWS_KEY_NAME ?: params.AWS_KEY_NAME}\"",
-                            "-var \"aws_private_key_file=${env.AWS_PRIVATE_KEY_FILE ?: ''}\"",
-                            "-var \"gcp_project=${params.GCP_PROJECT}\"",
-                            "-var \"gcp_zone=${params.GCP_ZONE}\"",
-                            "-var \"azure_location=${params.AZURE_LOCATION}\"",
-                            "-var \"azure_resource_group=${params.AZURE_RESOURCE_GROUP}\"",
-                            "-var \"azure_subscription_id=${params.AZURE_SUBSCRIPTION_ID}\"",
-                            "-var \"azure_tenant_id=${params.AZURE_TENANT_ID}\"",
-                            "-var \"image_type=${params.IMAGE_TYPE}\"",
-                            "-var \"instance_type=${params.INSTANCE_TYPE}\"",
-                            "-var \"disable_public_ip=${params.DISABLE_PUBLIC_IP}\""
-                        ].join(" ")
-
-                        // Determine source names based on image type
-                        def osType = params.IMAGE_TYPE == "Windows" ? "windows" : "linux"
-                        def sources = []
-                        if (params.BUILD_AWS) sources.add("amazon-ebs.aws_${osType}")
-                        if (params.BUILD_GCP) sources.add("googlecompute.gcp_${osType}")
-                        if (params.BUILD_AZURE) sources.add("azure-arm.azure_${osType}")
-
-                        if (sources.size() == 0) {
-                            error("No cloud providers selected for build.")
-                        }
-
-                        def onlyFlag = "--only=${sources.join(',')}"
-                        echo "Packer only targets: ${onlyFlag}"
-
-                        withCredentials([
-                            usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
-                            file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
-                            usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
-                        ]) {
-                            bat """
-                            @echo off
-                            echo Copying Packer executable to workspace...
-                            if exist "C:\\DevopsProject\\packer.exe" (
-                                copy /Y "C:\\DevopsProject\\packer.exe" .\\packer.exe
-                            ) else (
-                                echo ERROR: Packer executable not found at C:\\DevopsProject\\packer.exe
-                                exit /b 1
-                            )
-                            setlocal enabledelayedexpansion
-                            set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
-                            set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
-                            set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
-                            set ARM_CLIENT_ID=%ARM_CLIENT_ID%
-                            set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
-                            set ARM_SUBSCRIPTION_ID=${params.AZURE_SUBSCRIPTION_ID}
-                            set ARM_TENANT_ID=${params.AZURE_TENANT_ID}
-
-                            echo Current workspace: %cd%
-                            dir /b
-
-                            echo Testing Packer template...
-                            if exist "${PACKER_TEMPLATE}" (
-                                echo Packer template found
-                            ) else (
-                                echo Packer template not found: ${PACKER_TEMPLATE}
-                                dir /b
-                                exit /b 1
-                            )
-                            echo Testing Packer executable...
-                            if exist packer.exe (
-                                echo Packer executable found
-                            ) else (
-                                echo Packer executable not found
-                                exit /b 1
-                            )
-                            echo Testing Packer executable...
-                            packer.exe --version
-                            if %ERRORLEVEL% neq 0 (
-                                echo Packer executable test failed
-                                exit /b %ERRORLEVEL%
-                            )
-
-                            echo Running Packer build...
-                            echo Command: packer.exe build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
-                            packer.exe build ${onlyFlag} ${vars} -var "azure_client_id=%ARM_CLIENT_ID%" -var "azure_client_secret=%ARM_CLIENT_SECRET%" ${PACKER_TEMPLATE}
-                            if %ERRORLEVEL% neq 0 (
-                                echo Packer build failed with exit code %ERRORLEVEL%
-                                exit /b %ERRORLEVEL%
-                            )
-
-                            echo Listing workspace after Packer build...
-                            dir /b
-                            dir /s manifest.json || echo manifest.json not found in workspace tree
-
-                            if exist "manifest.json" (
-                                echo manifest.json created
-                            ) else (
-                                echo manifest.json missing after build
-                                exit /b 1
-                            )
-                            """
-
-                            stash includes: 'manifest.json', name: 'packer-manifest'
-                        }
-                    } finally {
-                        if (env.AWS_PRIVATE_KEY_FILE && fileExists(env.AWS_PRIVATE_KEY_FILE)) {
-                            echo "Cleaning up local private key..."
-                            bat "del \"${env.AWS_PRIVATE_KEY_FILE}\""
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Extract Image IDs') {
-            steps {
-                script {
-                    unstash 'packer-manifest'
-                    bat 'echo Current workspace: %cd% && dir /b'
-                    try {
-                        if (!fileExists('manifest.json')) {
-                            error('manifest.json not found; build likely failed before artifact creation.')
-                        }
-
-                        def manifestContent = readFile('manifest.json').trim()
-                        def manifest = readJSON text: manifestContent
-                        
-                        echo "=== Build Artifacts ==="
-                        if (manifest.builds) {
-                            manifest.builds.each { build ->
-                                echo "${build.name}: ${build.artifact_id}"
-                            }
-                        }
-
-                        manifest.builds?.each { build ->
-                            if (build.name.contains("aws")) {
-                                env.AMI_ID = build.artifact_id?.split(":")[1]
-                                echo "✓ AWS AMI ID: ${env.AMI_ID}"
-                            } else if (build.name.contains("gcp")) {
-                                env.GCP_IMAGE = build.artifact_id?.split("/")?.last()
-                                echo "✓ GCP Image: ${env.GCP_IMAGE}"
-                            } else if (build.name.contains("azure")) {
-                                env.AZURE_IMAGE = build.artifact_id
-                                echo "✓ Azure Image: ${env.AZURE_IMAGE}"
-                            }
-                        }
-                    } catch (Exception e) {
-                        echo "Warning: Could not parse manifest - ${e.message}"
-                        error('Manifest extraction failed, stopping pipeline to avoid skipped deploy stages.')
-                    }
-                }
-            }
-        }
-
-        stage('Deploy Instances') {
-            when { expression { params.DEPLOY_AWS || params.DEPLOY_GCP || params.DEPLOY_AZURE } }
-            parallel {
-                stage('Deploy AWS EC2') {
-                    when { expression { params.DEPLOY_AWS && env.AMI_ID } }
-                    steps {
-                        withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
-                            bat """
-                            @echo off
-                            setlocal enabledelayedexpansion
-                            set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
-                            set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
-                            set AWS_REGION=${params.AWS_REGION}
-                            set SG_NAME=packer-web-sg
-                            
-                            echo Checking for Security Group: !SG_NAME!
-                            set SG_ID=
-                            for /f "tokens=*" %%i in ('call aws ec2 describe-security-groups --group-names !SG_NAME! --region !AWS_REGION! --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
-                            
-                            if "!SG_ID!"=="" (
-                                echo Security Group not found. Creating...
-                                for /f "tokens=*" %%i in ('call aws ec2 create-security-group --group-name !SG_NAME! --description "Security group for Packer web server" --region !AWS_REGION! --query "GroupId" --output text') do set SG_ID=%%i
-                                echo Created Security Group: !SG_ID!
-                                
-                                echo Authorizing SSH Port 22...
-                                call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 22 --cidr 0.0.0.0/0 --region !AWS_REGION!
-                                echo Authorizing HTTP Port 80...
-                                call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 80 --cidr 0.0.0.0/0 --region !AWS_REGION!
-                            ) else (
-                                echo Using existing Security Group: !SG_ID!
-                            )
-                            
-                            set SPOT_FLAG=
-                            if "${params.INSTANCE_MODE}"=="Spot" set SPOT_FLAG=--instance-market-options MarketType=spot
-                            
-                            set NO_PIP=
-                            if "${params.DISABLE_PUBLIC_IP}"=="true" set NO_PIP=--no-associate-public-ip-address
-                            
-                            echo Deploying instance with Security Group: !SG_ID!
-                            call aws ec2 run-instances ^
-                              --image-id ${env.AMI_ID} ^
-                              --instance-type ${params.INSTANCE_TYPE} ^
-                              --region ${params.AWS_REGION} ^
-                              --key-name ${env.AWS_KEY_NAME ?: params.AWS_KEY_NAME} ^
-                              --security-group-ids !SG_ID! ^
-                              !SPOT_FLAG! ^
-                              !NO_PIP! ^
-                              --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${APP_NAME}},{Key=Environment,Value=${ENV}}]"
-                            """
-                        }
-                    }
-                }
-
-                stage('Deploy GCP VM') {
-                    when { expression { params.DEPLOY_GCP && env.GCP_IMAGE } }
-                    steps {
-                        withCredentials([file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS')]) {
-                            bat """
-                            @echo off
-                            setlocal enabledelayedexpansion
-                            set "PATH=%PATH%;C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin;%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin"
-                            set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
-                            
-                            call gcloud compute instances create ${APP_NAME}-gcp ^
-                              --image=${env.GCP_IMAGE} ^
-                              --image-project=${params.GCP_PROJECT} ^
-                              --zone=${params.GCP_ZONE} ^
-                              --machine-type=e2-micro ^
-                              --no-address ^
-                              --labels=app=${APP_NAME},env=${ENV}
-                            """
-                        }
-                    }
-                }
-
-                stage('Deploy Azure VM') {
-                    when { expression { params.DEPLOY_AZURE && env.AZURE_IMAGE } }
-                    steps {
-                        withCredentials([usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')]) {
-                            bat """
-                            @echo off
-                            setlocal enabledelayedexpansion
-                            set "PATH=%PATH%;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin"
-                            set ARM_CLIENT_ID=%ARM_CLIENT_ID%
-                            set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
-                            set ARM_SUBSCRIPTION_ID=${params.AZURE_SUBSCRIPTION_ID}
-                            set ARM_TENANT_ID=${params.AZURE_TENANT_ID}
-                            
-                            call az login --service-principal -u !ARM_CLIENT_ID! -p !ARM_CLIENT_SECRET! --tenant ${params.AZURE_TENANT_ID}
-                            call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
-                            
-                            call az vm create ^
-                              --name ${APP_NAME}-azure ^
-                              --image ${env.AZURE_IMAGE} ^
-                              --resource-group ${params.AZURE_RESOURCE_GROUP} ^
-                              --location "${params.AZURE_LOCATION}" ^
-                              --size Standard_B2ats_v2 ^
-                              --tags app=${APP_NAME} env=${ENV}
-                            """
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Send Notification') {
-            steps {
-                script {
-                    def status = currentBuild.result == 'SUCCESS' ? '✅ SUCCESS' : '❌ FAILED'
-                    def emailBody = """
-                    Multi-Cloud Packer Build & Deployment Report
-                    ================================================
-                    
-                    Build Status: ${status}
-                    Build Number: ${BUILD_NUMBER}
-                    Image Type: ${params.IMAGE_TYPE}
-                    Instance Mode: ${params.INSTANCE_MODE}
-                    Public IP: ${params.DISABLE_PUBLIC_IP ? 'Disabled' : 'Enabled'}
-                    
-                    Build Artifacts:
-                    - AWS AMI: ${env.AMI_ID ?: 'Failed'}
-                    - GCP Image: ${env.GCP_IMAGE ?: 'Failed'}
-                    - Azure Image: ${env.AZURE_IMAGE ?: 'Failed'}
-                    
-                    Jenkins Job: ${BUILD_URL}
-                    
-                    This is an automated notification.
+                    // Set PATH for cloud CLIs
+                    bat """
+                    @echo off
+                    set "PATH=%PATH%;C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin;%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin"
+                    set "PATH=%PATH%;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin"
                     """
-                    
-                    emailext(
-                        subject: "Multi-Cloud Packer Report - Build ${BUILD_NUMBER}",
-                        body: emailBody,
-                        to: "${params.EMAIL}",
-                        mimeType: 'text/plain'
-                    )
+
+                    withCredentials([
+                        usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
+                        file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
+                        usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
+                    ]) {
+                        switch(params.ACTION) {
+                            case 'BUILD':
+                                buildImage()
+                                break
+                            case 'DEPLOY':
+                                deployInstance()
+                                break
+                            case 'STOP':
+                                stopInstance()
+                                break
+                        }
+                    }
                 }
             }
         }
     }
 
     post {
-        always {
-            archiveArtifacts artifacts: 'manifest.json', allowEmptyArchive: true, fingerprint: true
+        success {
+            script {
+                def subject = "[${params.CLOUD}] ${params.ACTION} Succeeded - Build #${BUILD_NUMBER}"
+                def body = "Action '${params.ACTION}' for cloud '${params.CLOUD}' completed successfully.\n\n"
+                if (params.ACTION == 'BUILD') {
+                    body += "New Image ID: ${env.NEW_IMAGE_ID}\n"
+                    body += "Secret Name: ${env.KEY_NAME}-secret\n"
+                } else if (params.ACTION == 'DEPLOY') {
+                    body += "Instance ID: ${env.TARGET_INSTANCE_ID}\n"
+                    body += "Public IP: ${env.PUBLIC_IP}\n"
+                } else {
+                    body += "Instance ID: ${params.INSTANCE_ID}\n"
+                }
+                emailext(subject: subject, body: body, to: "${params.EMAIL}")
+            }
         }
+        failure {
+            script {
+                def subject = "[${params.CLOUD}] ${params.ACTION} FAILED - Build #${BUILD_NUMBER}"
+                def body = "Action '${params.ACTION}' for cloud '${params.CLOUD}' failed.\n\nCheck console output: ${BUILD_URL}console"
+                emailext(subject: subject, body: body, to: "${params.EMAIL}")
+            }
+        }
+        always {
+            script {
+                if (fileExists('private_key.pem')) { bat "del private_key.pem" }
+                if (fileExists('private_key.pem.pub')) { bat "del private_key.pem.pub" }
+            }
+            archiveArtifacts artifacts: 'manifest.json', allowEmptyArchive: true
+        }
+    }
+}
+
+def buildImage() {
+    def keyName = "prod-key-${BUILD_NUMBER}"
+    env.KEY_NAME = keyName
+    def privateKeyFile = "${WORKSPACE}\\private_key.pem"
+    def osType = params.IMAGE_TYPE.toLowerCase()
+    def packerSource = ""
+
+    // 1. Generate and Store SSH Key
+    stage("Setup and Store Key for ${params.CLOUD}") {
+        bat "ssh-keygen -t rsa -b 2048 -f private_key.pem -N \"\""
+        switch(params.CLOUD) {
+            case 'AWS':
+                packerSource = "amazon-ebs.aws_${osType}"
+                bat """
+                call aws ec2 import-key-pair --key-name ${keyName} --public-key-material fileb://private_key.pem.pub --region ${params.AWS_REGION}
+                call aws secretsmanager create-secret --name ${keyName}-secret --secret-string file://private_key.pem --region ${params.AWS_REGION}
+                """
+                break
+            case 'GCP':
+                packerSource = "googlecompute.gcp_${osType}"
+                bat """
+                call gcloud secrets create ${keyName}-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} 2>nul
+                call gcloud secrets versions add ${keyName}-secret --data-file=private_key.pem --project=${params.GCP_PROJECT}
+                """
+                break
+            case 'AZURE':
+                packerSource = "azure-arm.azure_${osType}"
+                bat """
+                call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
+                call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                call az keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name ${keyName}-secret --file private_key.pem
+                """
+                break
+        }
+    }
+
+    // 2. Run Packer Build
+    stage("Build Image for ${params.CLOUD}") {
+        try {
+            bat """
+            ${PACKER_EXE} init .
+            ${PACKER_EXE} validate -only=${packerSource} ${PACKER_TEMPLATE}
+            
+            ${PACKER_EXE} build ^
+                -only=${packerSource} ^
+                -var "image_name=${params.IMAGE_NAME}" ^
+                -var "image_type=${params.IMAGE_TYPE}" ^
+                -var "region=${params.AWS_REGION}" ^
+                -var "aws_key_name=${keyName}" ^
+                -var "aws_private_key_file=${privateKeyFile}" ^
+                -var "gcp_project=${params.GCP_PROJECT}" ^
+                -var "gcp_zone=${params.GCP_ZONE}" ^
+                -var "azure_resource_group=${params.AZURE_RESOURCE_GROUP}" ^
+                -var "azure_location=${params.AZURE_LOCATION}" ^
+                -var "azure_subscription_id=${params.AZURE_SUBSCRIPTION_ID}" ^
+                -var "azure_tenant_id=${params.AZURE_TENANT_ID}" ^
+                -var "azure_client_id=%ARM_CLIENT_ID%" ^
+                -var "azure_client_secret=%ARM_CLIENT_SECRET%" ^
+                ${PACKER_TEMPLATE}
+            """
+        } finally {
+            // This ensures the key is deleted even if the build fails
+            if (fileExists('private_key.pem')) { bat "del private_key.pem" }
+            if (fileExists('private_key.pem.pub')) { bat "del private_key.pem.pub" }
+        }
+    }
+
+    // 3. Extract Artifact ID
+    stage('Extract Artifact ID') {
+        if (fileExists('manifest.json')) {
+            def manifest = readJSON file: 'manifest.json'
+            def build = manifest.builds[0]
+            def artifactId = build.artifact_id
+            
+            switch(params.CLOUD) {
+                case 'AWS':
+                    env.NEW_IMAGE_ID = artifactId.split(':')[1]
+                    break
+                case 'GCP':
+                    env.NEW_IMAGE_ID = artifactId.split('/')[-1]
+                    break
+                case 'AZURE':
+                    env.NEW_IMAGE_ID = artifactId
+                    break;
+            }
+            echo "Successfully built ${params.CLOUD} image: ${env.NEW_IMAGE_ID}"
+        } else {
+            error "manifest.json not found. Packer build likely failed."
+        }
+    }
+}
+
+def deployInstance() {
+    stage("Deploy Instance to ${params.CLOUD}") {
+        switch(params.CLOUD) {
+            case 'AWS':
+                bat """
+                set SG_ID=
+                for /f "tokens=*" %%i in ('call aws ec2 describe-security-groups --group-names production-web-sg --query "SecurityGroups[0].GroupId" --output text --region ${params.AWS_REGION} 2^>nul') do set SG_ID=%%i
+                if "%SG_ID%"=="" (
+                    for /f "tokens=*" %%i in ('call aws ec2 create-security-group --group-name production-web-sg --description "Production Web SG" --query "GroupId" --output text --region ${params.AWS_REGION}') do set SG_ID=%%i
+                    call aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
+                    call aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
+                )
+                
+                set KEY_NAME=${params.SECRET_NAME.replace('-secret','')}
+                for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t2.micro --security-group-ids %SG_ID% --key-name %KEY_NAME% --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION}') do set INST_ID=%%i
+                call aws ec2 wait instance-running --instance-ids %INST_ID% --region ${params.AWS_REGION}
+                for /f "tokens=*" %%i in ('call aws ec2 describe-instances --instance-ids %INST_ID% --query "Reservations[0].Instances[0].PublicIpAddress" --output text --region ${params.AWS_REGION}') do set PUBLIC_IP=%%i
+                
+                echo TARGET_INSTANCE_ID=%INST_ID% > env.props
+                echo PUBLIC_IP=%PUBLIC_IP% >> env.props
+                """
+                break
+            case 'GCP':
+                bat """
+                set INSTANCE_NAME=prod-vm-${BUILD_NUMBER}
+                call gcloud compute firewall-rules create allow-ssh-http --allow tcp:22,tcp:80 --target-tags=prod-web --project=${params.GCP_PROJECT} 2>nul
+                
+                call gcloud compute instances create %INSTANCE_NAME% ^
+                    --image=${params.IMAGE_ID} ^
+                    --project=${params.GCP_PROJECT} ^
+                    --zone=${params.GCP_ZONE} ^
+                    --machine-type=e2-micro ^
+                    --tags=prod-web ^
+                    --format="get(networkInterfaces[0].accessConfigs[0].natIP)" > nat_ip.txt
+                
+                set /p PUBLIC_IP=<nat_ip.txt
+                echo TARGET_INSTANCE_ID=%INSTANCE_NAME% > env.props
+                echo PUBLIC_IP=%PUBLIC_IP% >> env.props
+                """
+                break
+            case 'AZURE':
+                bat """
+                set VM_NAME=prod-vm-${BUILD_NUMBER}
+                call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
+                call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                
+                call az vm create ^
+                    --resource-group ${params.AZURE_RESOURCE_GROUP} ^
+                    --name %VM_NAME% ^
+                    --image "${params.IMAGE_ID}" ^
+                    --admin-username azureuser ^
+                    --public-ip-sku Standard ^
+                    --nsg-rule SSH ^
+                    --query "{ip:publicIpAddress, id:id}" --output json > vm_info.json
+
+                call az vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name %VM_NAME% --port 80
+                """
+                def vmInfo = readJSON file: 'vm_info.json'
+                env.TARGET_INSTANCE_ID = vmInfo.id
+                env.PUBLIC_IP = vmInfo.ip
+                return // Skip property reading for Azure
+        }
+        def props = readProperties file: 'env.props'
+        env.TARGET_INSTANCE_ID = props['TARGET_INSTANCE_ID']
+        env.PUBLIC_IP = props['PUBLIC_IP']
+    }
+}
+
+def stopInstance() {
+    stage("Stop Instance on ${params.CLOUD}") {
+        if (params.INSTANCE_ID == '') {
+            error "INSTANCE_ID parameter is required for STOP action."
+        }
+        switch(params.CLOUD) {
+            case 'AWS':
+                bat "call aws ec2 stop-instances --instance-ids ${params.INSTANCE_ID} --region ${params.AWS_REGION}"
+                break
+            case 'GCP':
+                bat "call gcloud compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}"
+                break
+            case 'AZURE':
+                 bat """
+                    call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
+                    call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                    call az vm deallocate --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}
+                 """
+                break
+        }
+        echo "Stop command issued for instance ${params.INSTANCE_ID} in ${params.CLOUD}."
     }
 }

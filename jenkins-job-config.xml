@@ -10,71 +10,89 @@
     <hudson.model.ParametersDefinitionProperty>
       <parameterDefinitions>
         <hudson.model.StringParameterDefinition>
+          <name>ACTION</name>
+          <description>The action to perform: BUILD a new image, DEPLOY an instance from an image, or STOP a running instance.</description>
+          <defaultValue>BUILD</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>CLOUD</name>
+          <description>The target cloud provider.</description>
+          <defaultValue>AWS</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
           <name>IMAGE_NAME</name>
-          <description>Name for the Packer image</description>
-          <defaultValue>multi-cloud-ubuntu</defaultValue>
+          <description>Name for the Packer image (used for BUILD action).</description>
+          <defaultValue>multi-cloud-image</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>IMAGE_TYPE</name>
+          <description>Operating system type (used for BUILD action).</description>
+          <defaultValue>Linux</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>IMAGE_ID</name>
+          <description>The Image ID to launch (AMI ID, GCP Image Name, Azure Image ID). Required for DEPLOY action.</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>INSTANCE_ID</name>
+          <description>The ID of the instance to stop. Required for STOP action.</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>SECRET_NAME</name>
+          <description>The name of the secret holding the SSH key (e.g., prod-key-1-secret). Required for DEPLOY action.</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>EMAIL</name>
+          <description>Email for instance status notification</description>
+          <defaultValue>mounika.b5693@outlook.com</defaultValue>
           <trim>false</trim>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
           <name>AWS_REGION</name>
-          <description>AWS region for AMI</description>
+          <description>AWS region for all operations.</description>
           <defaultValue>us-east-1</defaultValue>
           <trim>false</trim>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
           <name>GCP_PROJECT</name>
-          <description>GCP project ID</description>
+          <description>GCP project ID.</description>
           <defaultValue>packer-demo-456789</defaultValue>
           <trim>false</trim>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
           <name>GCP_ZONE</name>
-          <description>GCP zone</description>
+          <description>GCP zone for all operations.</description>
           <defaultValue>us-central1-a</defaultValue>
           <trim>false</trim>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
+          <name>AZURE_RESOURCE_GROUP</name>
+          <description>Azure resource group.</description>
+          <defaultValue>packer-resources</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
           <name>AZURE_LOCATION</name>
-          <description>Azure region</description>
+          <description>Azure location for all operations.</description>
           <defaultValue>East US</defaultValue>
           <trim>false</trim>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
-          <name>AZURE_RESOURCE_GROUP</name>
-          <description>Azure resource group</description>
-          <defaultValue>packer-resources</defaultValue>
+          <name>AZURE_VAULT_NAME</name>
+          <description>Azure Key Vault name for storing/retrieving secrets.</description>
+          <defaultValue>packer-vault</defaultValue>
           <trim>false</trim>
         </hudson.model.StringParameterDefinition>
-        <hudson.model.BooleanParameterDefinition>
-          <name>BUILD_AWS</name>
-          <description>Build AWS AMI</description>
-          <defaultValue>true</defaultValue>
-        </hudson.model.BooleanParameterDefinition>
-        <hudson.model.BooleanParameterDefinition>
-          <name>BUILD_GCP</name>
-          <description>Build GCP Image</description>
-          <defaultValue>true</defaultValue>
-        </hudson.model.BooleanParameterDefinition>
-        <hudson.model.BooleanParameterDefinition>
-          <name>BUILD_AZURE</name>
-          <description>Build Azure Image</description>
-          <defaultValue>true</defaultValue>
-        </hudson.model.BooleanParameterDefinition>
-        <hudson.model.BooleanParameterDefinition>
-          <name>DEPLOY_AWS</name>
-          <description>Deploy AWS EC2 Instance</description>
-          <defaultValue>true</defaultValue>
-        </hudson.model.BooleanParameterDefinition>
-        <hudson.model.BooleanParameterDefinition>
-          <name>DEPLOY_GCP</name>
-          <description>Deploy GCP VM</description>
-          <defaultValue>true</defaultValue>
-        </hudson.model.BooleanParameterDefinition>
-        <hudson.model.BooleanParameterDefinition>
-          <name>DEPLOY_AZURE</name>
-          <description>Deploy Azure VM</description>
-          <defaultValue>true</defaultValue>
-        </hudson.model.BooleanParameterDefinition>
       </parameterDefinitions>
     </hudson.model.ParametersDefinitionProperty>
     <com.cloudbees.plugins.credentials.impl.CredentialsProvider plugin="credentials@1319.v7eb_51b_03e4b_d">
