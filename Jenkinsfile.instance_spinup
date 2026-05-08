@@ -173,6 +173,13 @@ def deployInstance() {
             call "!AZ_EXE!" login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
             call "!AZ_EXE!" account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
             
+            :: Retrieve SSH key from Key Vault
+            echo Retrieving SSH key from Key Vault...
+            call "!AZ_EXE!" keyvault secret show --vault-name ${params.AZURE_VAULT_NAME} --name ${params.SECRET_NAME} --query value -o tsv > private_key.pem
+            
+            :: Generate public key from private key
+            ssh-keygen -y -f private_key.pem > public_key.pub
+            
             :: 1. Launch
             echo Launching Azure VM...
             call "!AZ_EXE!" vm create ^
@@ -182,11 +189,18 @@ def deployInstance() {
                 --admin-username azureuser ^
                 --public-ip-sku Standard ^
                 --nsg-rule SSH ^
+                --ssh-key-values public_key.pub ^
                 --query "{ip:publicIpAddress, id:id}" --output json > vm_info.json
             
-            if %ERRORLEVEL% neq 0 (
+            set VM_EXIT_CODE=!ERRORLEVEL!
+            
+            :: Cleanup local keys
+            if exist private_key.pem del private_key.pem
+            if exist public_key.pub del public_key.pub
+            
+            if !VM_EXIT_CODE! neq 0 (
                 echo Azure VM launch failed.
-                exit /b %ERRORLEVEL%
+                exit /b !VM_EXIT_CODE!
             )
             
             :: 2. Open Port 80
