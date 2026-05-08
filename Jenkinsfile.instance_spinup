@@ -32,9 +32,6 @@ pipeline {
                             stopInstance()
                         }
                     }
-                    // Cleanup temporary files
-                    if (fileExists('gcloud_exe.env')) { bat "del gcloud_exe.env" }
-                    if (fileExists('az_exe.env')) { bat "del az_exe.env" }
                 }
             }
         }
