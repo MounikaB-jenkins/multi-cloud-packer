@@ -41,13 +41,12 @@ pipeline {
                         env.AZ_EXE = bat(returnStdout: true, script: """@echo off
                         setlocal enabledelayedexpansion
                         set "AZ_EXE_FOUND="
-                        where az >nul 2>&1
-                        if !ERRORLEVEL! equ 0 (
-                            set "AZ_EXE_FOUND=az"
-                        ) else (
-                            for %%p in ("C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin" "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin") do (
-                                if exist "%%~p\\az.cmd" if "!AZ_EXE_FOUND!"=="" set "AZ_EXE_FOUND=%%~p\\az.cmd"
-                            )
+                        for %%p in ("C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin" "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin") do (
+                            if exist "%%~p\\az.cmd" if "!AZ_EXE_FOUND!"=="" set "AZ_EXE_FOUND=%%~p\\az.cmd"
+                        )
+                        if "!AZ_EXE_FOUND!"=="" (
+                            where az >nul 2>&1
+                            if !ERRORLEVEL! equ 0 set "AZ_EXE_FOUND=az"
                         )
                         if "!AZ_EXE_FOUND!" neq "" echo !AZ_EXE_FOUND!
                         exit /b 0

@@ -91,13 +91,12 @@ pipeline {
 
                         :: Find az executable
                         set "AZ_EXE="
-                        where az >nul 2>&1
-                        if !ERRORLEVEL! equ 0 (
-                            set "AZ_EXE=az"
-                        ) else (
-                            for %%p in ("C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin" "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin") do (
-                                if exist "%%~p\\az.cmd" if "!AZ_EXE!"=="" set "AZ_EXE=%%~p\\az.cmd"
-                            )
+                        for %%p in ("C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\wbin" "C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin") do (
+                            if exist "%%~p\\az.cmd" if "!AZ_EXE!"=="" set "AZ_EXE=%%~p\\az.cmd"
+                        )
+                        if "!AZ_EXE!"=="" (
+                            where az >nul 2>&1
+                            if !ERRORLEVEL! equ 0 set "AZ_EXE=az"
                         )
 
                         echo Generating SSH keypair...
