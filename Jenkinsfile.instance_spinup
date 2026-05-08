@@ -32,6 +32,9 @@ pipeline {
                             stopInstance()
                         }
                     }
+                    // Cleanup temporary files
+                    if (fileExists('gcloud_exe.env')) { bat "del gcloud_exe.env" }
+                    if (fileExists('az_exe.env')) { bat "del az_exe.env" }
                 }
             }
         }
@@ -89,19 +92,21 @@ def deployInstance() {
         case 'GCP':
             bat """
             @echo off
-            :: Ensure common paths are in PATH
-            set "PATH=%PATH%;C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin;%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin"
-            
+            setlocal enabledelayedexpansion
+            set GCLOUD_EXE=${env.GCLOUD_EXE}
+            if "!GCLOUD_EXE!"=="" ( echo ERROR: gcloud CLI not found.; exit /b 1 )
+
             set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
+            
             set INSTANCE_NAME=prod-vm-%BUILD_NUMBER%
             
             :: 1. Firewall Rules
             echo Ensuring Firewall Rules...
-            call gcloud compute firewall-rules create allow-ssh-http-icmp --allow tcp:22,tcp:80,icmp --target-tags=prod-web --project=${params.GCP_PROJECT} 2>nul
+            call "!GCLOUD_EXE!" compute firewall-rules create allow-ssh-http-icmp --allow tcp:22,tcp:80,icmp --target-tags=prod-web --project=${params.GCP_PROJECT} 2>nul
             
             :: 2. Launch
             echo Launching GCP Instance...
-            call gcloud compute instances create %INSTANCE_NAME% ^
+            call "!GCLOUD_EXE!" compute instances create %INSTANCE_NAME% ^
                 --image=${params.IMAGE_ID} ^
                 --project=${params.GCP_PROJECT} ^
                 --zone=${params.GCP_ZONE} ^
@@ -151,7 +156,7 @@ def deployInstance() {
             
             :: 2. Open Port 80
             echo Opening Port 80...
-            call az vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name %VM_NAME% --port 80
+            call "!AZ_EXE!" vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name %VM_NAME% --port 80
             """
             // Extract IP from JSON
             def vmInfo = readJSON file: 'vm_info.json'
@@ -173,20 +178,24 @@ def stopInstance() {
         case 'GCP':
             bat """
             @echo off
-            set "PATH=%PATH%;C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin;%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin"
-            call gcloud compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}
+            setlocal enabledelayedexpansion
+            set GCLOUD_EXE=${env.GCLOUD_EXE}
+            if "!GCLOUD_EXE!"=="" ( echo ERROR: gcloud CLI not found.; exit /b 1 )
+            call "!GCLOUD_EXE!" compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}
             """
             break
         case 'AZURE':
             withCredentials([usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')]) {
                 bat """
                 @echo off
-                set "PATH=%PATH%;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin"
+                setlocal enabledelayedexpansion
+                set AZ_EXE=${env.AZ_EXE}
+                if "!AZ_EXE!"=="" ( echo ERROR: Azure CLI not found.; exit /b 1 )
                 set ARM_CLIENT_ID=%ARM_CLIENT_ID%
                 set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
-                call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
-                call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
-                call az vm stop --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}
+                call "!AZ_EXE!" login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
+                call "!AZ_EXE!" account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                call "!AZ_EXE!" vm stop --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}
                 """
             }
             break
