@@ -169,14 +169,14 @@ pipeline {
                             :: Handle Permissions
                             call "!AZ_EXE!" keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name "test-permission" --value "test" >nul 2>&1
                             if !ERRORLEVEL! neq 0 (
-                                echo [INFO] Service Principal lacks permission. Attempting to grant...
-                                for /f "tokens=*" %%i in ('"!AZ_EXE!" ad sp show --id %ARM_CLIENT_ID% --query id --output tsv 2^>nul') do set SP_OID=%%i
-                                if "!SP_OID!" neq "" (
-                                    call "!AZ_EXE!" role assignment create --role "Key Vault Secrets Officer" --assignee !SP_OID! --scope /subscriptions/${params.AZURE_SUBSCRIPTION_ID}/resourceGroups/${params.AZURE_RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${params.AZURE_VAULT_NAME} >nul 2>&1
-                                    if !ERRORLEVEL! equ 0 (
-                                        echo [SUCCESS] Permission granted. Waiting for propagation...
-                                        ping 127.0.0.1 -n 61 > nul
-                                    )
+                                echo [INFO] Service Principal lacks permission. Attempting to grant 'Key Vault Secrets Officer' role...
+                                call "!AZ_EXE!" role assignment create --role "Key Vault Secrets Officer" --assignee %ARM_CLIENT_ID% --scope "/subscriptions/${params.AZURE_SUBSCRIPTION_ID}/resourceGroups/${params.AZURE_RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${params.AZURE_VAULT_NAME}"
+                                if !ERRORLEVEL! equ 0 (
+                                    echo [SUCCESS] Permission granted. Waiting 60s for propagation...
+                                    ping 127.0.0.1 -n 61 > nul
+                                ) else (
+                                    echo [ERROR] Role assignment failed. Your Service Principal must have 'Owner' or 'Role Based Access Control Administrator' permissions to grant itself Key Vault access.
+                                    exit /b 1
                                 )
                             )
                             
