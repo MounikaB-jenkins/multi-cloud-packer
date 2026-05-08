@@ -119,8 +119,7 @@ pipeline {
                         if !ERRORLEVEL! equ 0 (
                             set "GCLOUD_EXE=gcloud"
                         ) else (
-                            set "GCP_SEARCH_PATHS="C:\\Users\\vresh\\AppData\\Local\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin""
-                            for %%p in (%GCP_SEARCH_PATHS%) do (
+                            for %%p in ("C:\\Users\\vresh\\AppData\\Local\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin") do (
                                 if exist "%%~p\\gcloud.cmd" if "!GCLOUD_EXE!"=="" set "GCLOUD_EXE=%%~p\\gcloud.cmd"
                             )
                         )
@@ -131,8 +130,7 @@ pipeline {
                         if !ERRORLEVEL! equ 0 (
                             set "AZ_EXE=az"
                         ) else (
-                            set "AZ_SEARCH_PATHS="C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin" "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin""
-                            for %%p in (%AZ_SEARCH_PATHS%) do (
+                            for %%p in ("C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin" "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin") do (
                                 if exist "%%~p\\az.cmd" if "!AZ_EXE!"=="" set "AZ_EXE=%%~p\\az.cmd"
                             )
                         )
