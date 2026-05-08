@@ -136,6 +136,11 @@ pipeline {
                                 echo ERROR: Azure CLI 'az' not found. Checked common paths.
                                 exit /b 1
                             )
+                            
+                            :: Prevent Python environment conflicts for Azure CLI
+                            set PYTHONHOME=
+                            set PYTHONPATH=
+                            
                             set ARM_CLIENT_ID=%ARM_CLIENT_ID%
                             set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
                             call "!AZ_EXE!" login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}

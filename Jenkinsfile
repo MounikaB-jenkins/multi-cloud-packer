@@ -135,6 +135,8 @@ def buildImage() {
             case 'AZURE':
                 packerSource = "azure-arm.azure_${osType}"
                 bat """
+                set PYTHONHOME=
+                set PYTHONPATH=
                 call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
                 call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
                 call az keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name ${keyName}-secret --file private_key.pem
@@ -241,6 +243,8 @@ def deployInstance() {
                 break
             case 'AZURE':
                 bat """
+                set PYTHONHOME=
+                set PYTHONPATH=
                 set VM_NAME=prod-vm-${BUILD_NUMBER}
                 call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
                 call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
@@ -281,6 +285,8 @@ def stopInstance() {
                 break
             case 'AZURE':
                  bat """
+                    set PYTHONHOME=
+                    set PYTHONPATH=
                     call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
                     call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
                     call az vm deallocate --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}
