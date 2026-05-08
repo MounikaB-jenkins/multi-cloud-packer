@@ -1,21 +1,32 @@
 def PACKER = 'C:\\DevopsProject\\packer.exe'
 
+properties([
+    parameters([
+        choice(name: 'CLOUD_PROVIDER', choices: ['ALL', 'AWS', 'GCP', 'AZURE'], description: 'Select cloud provider(s) to build images for'),
+        string(name: 'IMAGE_NAME', defaultValue: 'multi-cloud-ubuntu', description: 'Name for the Packer image'),
+        string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for notification'),
+        
+        // Dynamic Parameters that render ONLY if their respective cloud is selected
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'AWS Region', name: 'AWS_REGION', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AWS" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'us-east-1\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'us-east-1\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'GCP Project ID', name: 'GCP_PROJECT', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "GCP" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'packer-demo-456789\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'packer-demo-456789\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'GCP Zone', name: 'GCP_ZONE', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "GCP" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'us-central1-a\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'us-central1-a\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Region', name: 'AZURE_LOCATION', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'eastus\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'eastus\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Key Vault Name', name: 'AZURE_VAULT_NAME', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'packer-vault\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'packer-vault\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Resource Group', name: 'AZURE_RESOURCE_GROUP', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'packer-resources\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'packer-resources\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Subscription ID', name: 'AZURE_SUBSCRIPTION_ID', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'b943e408-73c1-4cea-b780-689120606f67\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'b943e408-73c1-4cea-b780-689120606f67\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Tenant ID', name: 'AZURE_TENANT_ID', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'8344e416-02b8-4b70-a912-1995cc408f19\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'8344e416-02b8-4b70-a912-1995cc408f19\'>" }']]]
+    ])
+])
+
 pipeline {
     agent any
-
-    parameters {
-        choice(name: 'CLOUD_PROVIDER', choices: ['ALL', 'AWS', 'GCP', 'AZURE'], description: 'Select cloud provider(s) to build images for')
-        string(name: 'IMAGE_NAME', defaultValue: 'multi-cloud-ubuntu', description: 'Name for the Packer image')
-        string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for notification')
-        string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region (used if AWS or ALL is selected)')
-        string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID (used if GCP or ALL is selected)')
-        string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone (used if GCP or ALL is selected)')
-        string(name: 'AZURE_LOCATION', defaultValue: 'eastus', description: 'Azure region (used if AZURE or ALL is selected)')
-        string(name: 'AZURE_VAULT_NAME', defaultValue: 'packer-vault', description: 'Azure Key Vault name')
-        string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group')
-        string(name: 'AZURE_SUBSCRIPTION_ID', defaultValue: 'b943e408-73c1-4cea-b780-689120606f67', description: 'Azure subscription ID')
-        string(name: 'AZURE_TENANT_ID', defaultValue: '8344e416-02b8-4b70-a912-1995cc408f19', description: 'Azure tenant ID')
-    }
 
     environment {
         PACKER_TEMPLATE = 'aws-ubuntu.pkr.hcl'
