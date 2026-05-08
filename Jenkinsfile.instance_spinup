@@ -177,6 +177,15 @@ def deployInstance() {
             echo Retrieving SSH key from Key Vault...
             call "!AZ_EXE!" keyvault secret show --vault-name ${params.AZURE_VAULT_NAME} --name ${params.SECRET_NAME} --query value -o tsv > private_key.pem
             
+            if !ERRORLEVEL! neq 0 (
+                echo ERROR: Failed to retrieve secret. Verify AZURE_VAULT_NAME and SECRET_NAME.
+                exit /b 1
+            )
+            
+            :: Fix SSH key permissions on Windows
+            icacls private_key.pem /inheritance:r /Q
+            icacls private_key.pem /grant:r "%USERNAME%:(R)" /Q
+            
             :: Generate public key from private key
             ssh-keygen -y -f private_key.pem > public_key.pub
             
@@ -185,6 +194,7 @@ def deployInstance() {
             call "!AZ_EXE!" vm create ^
                 --resource-group ${params.AZURE_RESOURCE_GROUP} ^
                 --name %VM_NAME% ^
+                --size Standard_B2s ^
                 --image ${params.IMAGE_ID} ^
                 --admin-username azureuser ^
                 --public-ip-sku Standard ^
