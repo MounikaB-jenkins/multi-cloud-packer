@@ -33,7 +33,8 @@ pipeline {
                                 if exist "%%~p\\gcloud.cmd" if "!GCLOUD_EXE_FOUND!"=="" set "GCLOUD_EXE_FOUND=%%~p\\gcloud.cmd"
                             )
                         )
-                        echo !GCLOUD_EXE_FOUND!
+                        if "!GCLOUD_EXE_FOUND!" neq "" echo !GCLOUD_EXE_FOUND!
+                        exit /b 0
                         """).trim()
 
                         // Find az executable
@@ -48,7 +49,8 @@ pipeline {
                                 if exist "%%~p\\az.cmd" if "!AZ_EXE_FOUND!"=="" set "AZ_EXE_FOUND=%%~p\\az.cmd"
                             )
                         )
-                        echo !AZ_EXE_FOUND!
+                        if "!AZ_EXE_FOUND!" neq "" echo !AZ_EXE_FOUND!
+                        exit /b 0
                         """).trim()
 
                     withCredentials([
