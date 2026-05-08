@@ -21,6 +21,36 @@ pipeline {
         stage('Manage Instance') {
             steps {
                 script {
+                        // Find gcloud executable
+                        env.GCLOUD_EXE = bat(returnStdout: true, script: """@echo off
+                        setlocal enabledelayedexpansion
+                        set "GCLOUD_EXE_FOUND="
+                        where gcloud >nul 2>&1
+                        if !ERRORLEVEL! equ 0 (
+                            set "GCLOUD_EXE_FOUND=gcloud"
+                        ) else (
+                            for %%p in ("C:\\Users\\vresh\\AppData\\Local\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin" "%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin") do (
+                                if exist "%%~p\\gcloud.cmd" if "!GCLOUD_EXE_FOUND!"=="" set "GCLOUD_EXE_FOUND=%%~p\\gcloud.cmd"
+                            )
+                        )
+                        echo !GCLOUD_EXE_FOUND!
+                        """).trim()
+
+                        // Find az executable
+                        env.AZ_EXE = bat(returnStdout: true, script: """@echo off
+                        setlocal enabledelayedexpansion
+                        set "AZ_EXE_FOUND="
+                        where az >nul 2>&1
+                        if !ERRORLEVEL! equ 0 (
+                            set "AZ_EXE_FOUND=az"
+                        ) else (
+                            for %%p in ("C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin" "C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin") do (
+                                if exist "%%~p\\az.cmd" if "!AZ_EXE_FOUND!"=="" set "AZ_EXE_FOUND=%%~p\\az.cmd"
+                            )
+                        )
+                        echo !AZ_EXE_FOUND!
+                        """).trim()
+
                     withCredentials([
                         usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
                         file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
@@ -125,19 +155,20 @@ def deployInstance() {
         case 'AZURE':
             bat """
             @echo off
-            :: Ensure common paths are in PATH
-            set "PATH=%PATH%;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin"
+            setlocal enabledelayedexpansion
+            set AZ_EXE=${env.AZ_EXE}
+            if "!AZ_EXE!"=="" ( echo ERROR: Azure CLI not found.; exit /b 1 )
             
             set ARM_CLIENT_ID=%ARM_CLIENT_ID%
             set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
             set VM_NAME=prod-vm-%BUILD_NUMBER%
             
-            call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
-            call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+            call "!AZ_EXE!" login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
+            call "!AZ_EXE!" account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
             
             :: 1. Launch
             echo Launching Azure VM...
-            call az vm create ^
+            call "!AZ_EXE!" vm create ^
                 --resource-group ${params.AZURE_RESOURCE_GROUP} ^
                 --name %VM_NAME% ^
                 --image ${params.IMAGE_ID} ^
