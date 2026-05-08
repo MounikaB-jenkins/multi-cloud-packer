@@ -158,12 +158,14 @@ def deployInstance() {
             bat """
             @echo off
             setlocal enabledelayedexpansion
-            set AZ_EXE=${env.AZ_EXE}
-            if "!AZ_EXE!"=="" ( echo ERROR: Azure CLI not found.; exit /b 1 )
             
             :: Prevent Python environment conflicts for Azure CLI
-            set PYTHONHOME=
-            set PYTHONPATH=
+            set "PYTHONHOME="
+            set "PYTHONPATH="
+            set "PYTHONEXECUTABLE="
+            
+            set AZ_EXE=${env.AZ_EXE}
+            if "!AZ_EXE!"=="" ( echo ERROR: Azure CLI not found.; exit /b 1 )
             
             set ARM_CLIENT_ID=%ARM_CLIENT_ID%
             set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
@@ -223,12 +225,14 @@ def stopInstance() {
                 bat """
                 @echo off
                 setlocal enabledelayedexpansion
-                set AZ_EXE=${env.AZ_EXE}
-                if "!AZ_EXE!"=="" ( echo ERROR: Azure CLI not found.; exit /b 1 )
                 
                 :: Prevent Python environment conflicts for Azure CLI
-                set PYTHONHOME=
-                set PYTHONPATH=
+                set "PYTHONHOME="
+                set "PYTHONPATH="
+                set "PYTHONEXECUTABLE="
+                
+                set AZ_EXE=${env.AZ_EXE}
+                if "!AZ_EXE!"=="" ( echo ERROR: Azure CLI not found.; exit /b 1 )
                 
                 set ARM_CLIENT_ID=%ARM_CLIENT_ID%
                 set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
