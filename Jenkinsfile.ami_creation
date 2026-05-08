@@ -108,8 +108,12 @@ pipeline {
                                 exit /b 1
                             )
                             set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
-                            call "!GCLOUD_EXE!" secrets create %KEY_NAME%-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} 2>nul
-                            call "!GCLOUD_EXE!" secrets versions add %KEY_NAME%-secret --data-file=private_key.pem --project=${params.GCP_PROJECT}
+                            echo Authenticating gcloud with service account...
+                            call "!GCLOUD_EXE!" auth activate-service-account --key-file="%GOOGLE_APPLICATION_CREDENTIALS%" --quiet
+                            echo Enabling Secret Manager API...
+                            call "!GCLOUD_EXE!" services enable secretmanager.googleapis.com --project=${params.GCP_PROJECT} --quiet
+                            call "!GCLOUD_EXE!" secrets create %KEY_NAME%-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} --quiet 2>nul
+                            call "!GCLOUD_EXE!" secrets versions add %KEY_NAME%-secret --data-file=private_key.pem --project=${params.GCP_PROJECT} --quiet
                         )
                         
                         :: Azure Storage
