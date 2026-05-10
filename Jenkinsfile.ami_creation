@@ -12,17 +12,33 @@ properties([
         
         [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'GCP Project ID', name: 'GCP_PROJECT', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "GCP" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'packer-demo-456789\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'packer-demo-456789\'>" }']]],
         
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'AWS Copy Regions (comma-separated)', name: 'AWS_COPY_REGIONS', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AWS" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'AWS Share Account IDs (comma-separated)', name: 'AWS_SHARE_ACCOUNTS', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AWS" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'\'>" }']]],
+        
         [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'GCP Zone', name: 'GCP_ZONE', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "GCP" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'us-central1-a\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'us-central1-a\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'GCP Storage Locations (comma-separated)', name: 'GCP_STORAGE_LOCATIONS', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "GCP" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'GCP Share Members (e.g. serviceAccount:user@gcp.com)', name: 'GCP_SHARE_MEMBERS', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "GCP" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'\'>" }']]],
         
         [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Region', name: 'AZURE_LOCATION', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'eastus\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'eastus\'>" }']]],
         
         [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Key Vault Name', name: 'AZURE_VAULT_NAME', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'packer-vault\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'packer-vault\'>" }']]],
         
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Gallery Resource Group', name: 'AZURE_GALLERY_RG', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Gallery Name', name: 'AZURE_GALLERY_NAME', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Gallery Regions (comma-separated)', name: 'AZURE_GALLERY_REGIONS', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'\'>" }']]],
+        
         [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Resource Group', name: 'AZURE_RESOURCE_GROUP', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'packer-resources\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'packer-resources\'>" }']]],
         
         [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Subscription ID', name: 'AZURE_SUBSCRIPTION_ID', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'b943e408-73c1-4cea-b780-689120606f67\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'b943e408-73c1-4cea-b780-689120606f67\'>" }']]],
         
-        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Tenant ID', name: 'AZURE_TENANT_ID', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'8344e416-02b8-4b70-a912-1995cc408f19\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'8344e416-02b8-4b70-a912-1995cc408f19\'>" }']]]
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Tenant ID', name: 'AZURE_TENANT_ID', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'8344e416-02b8-4b70-a912-1995cc408f19\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'8344e416-02b8-4b70-a912-1995cc408f19\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'Azure Share Target Object IDs (comma-separated)', name: 'AZURE_SHARE_OIDS', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AZURE" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'\'>" }']]]
     ])
 ])
 
@@ -203,6 +219,15 @@ pipeline {
                     
                     def onlyFlag = "--only=${onlyTargets.join(',')}"
 
+                    // Format comma-separated parameters into JSON arrays for Packer variables
+                    env.PKR_VAR_aws_ami_regions = params.AWS_COPY_REGIONS ? "[\"${params.AWS_COPY_REGIONS.split(',').collect{it.trim()}.join('\",\"')}\"]" : "[]"
+                    env.PKR_VAR_aws_ami_users = params.AWS_SHARE_ACCOUNTS ? "[\"${params.AWS_SHARE_ACCOUNTS.split(',').collect{it.trim()}.join('\",\"')}\"]" : "[]"
+
+                    env.PKR_VAR_gcp_storage_locations = params.GCP_STORAGE_LOCATIONS ? "[\"${params.GCP_STORAGE_LOCATIONS.split(',').collect{it.trim()}.join('\",\"')}\"]" : "[]"
+                    env.PKR_VAR_azure_gallery_rg = params.AZURE_GALLERY_RG ?: ""
+                    env.PKR_VAR_azure_gallery_name = params.AZURE_GALLERY_NAME ?: ""
+                    env.PKR_VAR_azure_gallery_regions = params.AZURE_GALLERY_REGIONS ? "[\"${params.AZURE_GALLERY_REGIONS.split(',').collect{it.trim()}.join('\",\"')}\"]" : "[]"
+
                     withCredentials([
                         usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
                         file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
@@ -247,6 +272,43 @@ pipeline {
                             if (build.name.contains("azure")) env.AZURE_IMAGE = build.artifact_id
                         }
                         echo "Artifacts: AWS=${env.AMI_ID}, GCP=${env.GCP_IMAGE}, Azure=${env.AZURE_IMAGE}"
+                    }
+                }
+            }
+        }
+
+        stage('Share Cross-Account Images') {
+            when {
+                expression { params.GCP_SHARE_MEMBERS != '' || params.AZURE_SHARE_OIDS != '' }
+            }
+            steps {
+                script {
+                    withCredentials([
+                        file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
+                        usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
+                    ]) {
+                        if (env.GCP_IMAGE && params.GCP_SHARE_MEMBERS) {
+                            bat """
+                            @echo off
+                            set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
+                            call gcloud auth activate-service-account --key-file="%GOOGLE_APPLICATION_CREDENTIALS%" --quiet
+                            for %%M in (${params.GCP_SHARE_MEMBERS.replace(',', ' ')}) do (
+                                echo Granting GCP image access to %%M...
+                                call gcloud compute images add-iam-policy-binding ${env.GCP_IMAGE} --project=${params.GCP_PROJECT} --member="%%M" --role="roles/compute.imageUser" --quiet
+                            )
+                            """
+                        }
+                        if (env.AZURE_IMAGE && params.AZURE_SHARE_OIDS) {
+                            bat """
+                            @echo off
+                            call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID} >nul 2>&1
+                            call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                            for %%O in (${params.AZURE_SHARE_OIDS.replace(',', ' ')}) do (
+                                echo Granting Azure Reader access to Object ID %%O...
+                                call az role assignment create --role "Reader" --assignee %%O --scope "${env.AZURE_IMAGE}"
+                            )
+                            """
+                        }
                     }
                 }
             }

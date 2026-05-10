@@ -17,13 +17,21 @@ pipeline {
 
         // Cloud Configuration
         string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region for all operations.')
+        string(name: 'AWS_COPY_REGIONS', defaultValue: '', description: 'Comma-separated list of AWS regions to copy the AMI to.')
+        string(name: 'AWS_SHARE_ACCOUNTS', defaultValue: '', description: 'Comma-separated list of AWS Account IDs to share the AMI with.')
         string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID')
         string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone for all operations.')
+        string(name: 'GCP_STORAGE_LOCATIONS', defaultValue: '', description: 'Comma-separated GCP regions to copy the image to.')
+        string(name: 'GCP_SHARE_MEMBERS', defaultValue: '', description: 'Comma-separated GCP IAM members to share the image with.')
         string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group')
         string(name: 'AZURE_LOCATION', defaultValue: 'East US', description: 'Azure location for all operations.')
+        string(name: 'AZURE_GALLERY_RG', defaultValue: '', description: 'Azure Compute Gallery Resource Group.')
+        string(name: 'AZURE_GALLERY_NAME', defaultValue: '', description: 'Azure Compute Gallery Name.')
+        string(name: 'AZURE_GALLERY_REGIONS', defaultValue: '', description: 'Comma-separated list of Azure regions to copy the image to.')
         string(name: 'AZURE_VAULT_NAME', defaultValue: 'packer-vault', description: 'Azure Key Vault name for storing/retrieving secrets.')
         string(name: 'AZURE_SUBSCRIPTION_ID', defaultValue: 'b943e408-73c1-4cea-b780-689120606f67', description: 'Azure subscription ID')
         string(name: 'AZURE_TENANT_ID', defaultValue: '8344e416-02b8-4b70-a912-1995cc408f19', description: 'Azure tenant ID')
+        string(name: 'AZURE_SHARE_OIDS', defaultValue: '', description: 'Comma-separated Object IDs to grant Reader access to the image.')
         
         // Notifications
         string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for instance status notification')
@@ -150,6 +158,15 @@ def buildImage() {
     // 2. Run Packer Build
     stage("Build Image for ${params.CLOUD}") {
         try {
+            // Format comma-separated parameters into JSON arrays for Packer variables
+            env.PKR_VAR_aws_ami_regions = params.AWS_COPY_REGIONS ? "[\"${params.AWS_COPY_REGIONS.split(',').collect{it.trim()}.join('\",\"')}\"]" : "[]"
+            env.PKR_VAR_aws_ami_users = params.AWS_SHARE_ACCOUNTS ? "[\"${params.AWS_SHARE_ACCOUNTS.split(',').collect{it.trim()}.join('\",\"')}\"]" : "[]"
+
+            env.PKR_VAR_gcp_storage_locations = params.GCP_STORAGE_LOCATIONS ? "[\"${params.GCP_STORAGE_LOCATIONS.split(',').collect{it.trim()}.join('\",\"')}\"]" : "[]"
+            env.PKR_VAR_azure_gallery_rg = params.AZURE_GALLERY_RG ?: ""
+            env.PKR_VAR_azure_gallery_name = params.AZURE_GALLERY_NAME ?: ""
+            env.PKR_VAR_azure_gallery_regions = params.AZURE_GALLERY_REGIONS ? "[\"${params.AZURE_GALLERY_REGIONS.split(',').collect{it.trim()}.join('\",\"')}\"]" : "[]"
+
             bat """
             ${PACKER_EXE} init .
             ${PACKER_EXE} validate -only=${packerSource} ${PACKER_TEMPLATE}
@@ -197,6 +214,26 @@ def buildImage() {
                     break;
             }
             echo "Successfully built ${params.CLOUD} image: ${env.NEW_IMAGE_ID}"
+            
+            // Cross-Account Sharing Post-Build
+            if (params.CLOUD == 'GCP' && params.GCP_SHARE_MEMBERS) {
+                bat """
+                @echo off
+                set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
+                call gcloud auth activate-service-account --key-file="%GOOGLE_APPLICATION_CREDENTIALS%" --quiet
+                for %%M in (${params.GCP_SHARE_MEMBERS.replace(',', ' ')}) do (
+                    call gcloud compute images add-iam-policy-binding ${env.NEW_IMAGE_ID} --project=${params.GCP_PROJECT} --member="%%M" --role="roles/compute.imageUser" --quiet
+                )
+                """
+            }
+            if (params.CLOUD == 'AZURE' && params.AZURE_SHARE_OIDS) {
+                bat """
+                @echo off
+                for %%O in (${params.AZURE_SHARE_OIDS.replace(',', ' ')}) do (
+                    call az role assignment create --role "Reader" --assignee %%O --scope "${env.NEW_IMAGE_ID}"
+                )
+                """
+            }
         } else {
             error "manifest.json not found. Packer build likely failed."
         }

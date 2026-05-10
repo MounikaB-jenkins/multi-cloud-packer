@@ -115,6 +115,39 @@ variable "azure_tenant_id" {
   description = "Azure tenant ID"
 }
 
+variable "aws_ami_regions" {
+  type        = list(string)
+  default     = []
+  description = "List of AWS regions to copy the AMI to (Same Account)"
+}
+
+variable "aws_ami_users" {
+  type        = list(string)
+  default     = []
+  description = "List of AWS Account IDs to share the AMI with (Cross Account)"
+}
+
+variable "gcp_storage_locations" {
+  type        = list(string)
+  default     = []
+  description = "List of GCP regions to copy the image to"
+}
+
+variable "azure_gallery_rg" {
+  type        = string
+  default     = ""
+}
+
+variable "azure_gallery_name" {
+  type        = string
+  default     = ""
+}
+
+variable "azure_gallery_regions" {
+  type        = list(string)
+  default     = []
+}
+
 # ==================== LINUX SOURCES ====================
 source "amazon-ebs" "aws_linux" {
   region            = var.region
@@ -135,6 +168,9 @@ source "amazon-ebs" "aws_linux" {
 
   ssh_username = "ubuntu"
   ami_name     = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  
+  ami_regions  = var.aws_ami_regions
+  ami_users    = var.aws_ami_users
 
   tags = {
     Name        = var.image_name
@@ -157,6 +193,7 @@ source "googlecompute" "gcp_linux" {
   image_name        = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
   omit_external_ip  = var.disable_public_ip
   use_internal_ip   = var.disable_public_ip
+  storage_locations = var.gcp_storage_locations
 
   image_labels = {
     name        = var.image_name
@@ -184,6 +221,18 @@ source "azure-arm" "azure_linux" {
 
   managed_image_resource_group_name = var.azure_resource_group
   managed_image_name                = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+
+  dynamic "shared_image_gallery_destination" {
+    for_each = var.azure_gallery_name != "" ? [1] : []
+    content {
+      subscription        = var.azure_subscription_id
+      resource_group      = var.azure_gallery_rg
+      gallery_name        = var.azure_gallery_name
+      image_name          = var.image_name
+      image_version       = formatdate("1.0.MMDDhh", timestamp())
+      replication_regions = var.azure_gallery_regions
+    }
+  }
 
   azure_tags = {
     Name        = var.image_name
@@ -213,6 +262,9 @@ source "amazon-ebs" "aws_windows" {
   communicator   = "winrm"
   winrm_username = "Administrator"
   ami_name       = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  
+  ami_regions  = var.aws_ami_regions
+  ami_users    = var.aws_ami_users
 
   tags = {
     Name        = var.image_name
@@ -236,6 +288,7 @@ source "googlecompute" "gcp_windows" {
   image_name        = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
   omit_external_ip  = var.disable_public_ip
   use_internal_ip   = var.disable_public_ip
+  storage_locations = var.gcp_storage_locations
 
   image_labels = {
     name        = var.image_name
@@ -268,6 +321,18 @@ source "azure-arm" "azure_windows" {
   
   managed_image_resource_group_name = var.azure_resource_group
   managed_image_name                = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+
+  dynamic "shared_image_gallery_destination" {
+    for_each = var.azure_gallery_name != "" ? [1] : []
+    content {
+      subscription        = var.azure_subscription_id
+      resource_group      = var.azure_gallery_rg
+      gallery_name        = var.azure_gallery_name
+      image_name          = var.image_name
+      image_version       = formatdate("1.0.MMDDhh", timestamp())
+      replication_regions = var.azure_gallery_regions
+    }
+  }
 
   azure_tags = {
     Name        = var.image_name
