@@ -3,6 +3,7 @@ def PACKER = 'C:\\DevopsProject\\packer.exe'
 properties([
     parameters([
         choice(name: 'CLOUD_PROVIDER', choices: ['ALL', 'AWS', 'GCP', 'AZURE'], description: 'Select cloud provider(s) to build images for'),
+        string(name: 'BRANCH_NAME', defaultValue: 'development', description: 'Git branch to checkout and build (e.g., development, main, feature/xyz)'),
         string(name: 'IMAGE_NAME', defaultValue: 'multi-cloud-ubuntu', description: 'Name for the Packer image'),
         string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for notification'),
         
@@ -36,7 +37,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 deleteDir()
-                git branch: 'main',
+                git branch: params.BRANCH_NAME,
                       credentialsId: 'github-token',
                       url: 'https://github.com/MounikaB-jenkins/multi-cloud-packer.git'
             }

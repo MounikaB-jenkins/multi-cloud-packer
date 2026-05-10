@@ -252,6 +252,7 @@ def deployInstance() {
                 call az vm create ^
                     --resource-group ${params.AZURE_RESOURCE_GROUP} ^
                     --name %VM_NAME% ^
+                    --size Standard_B2ats_v2 ^
                     --image "${params.IMAGE_ID}" ^
                     --admin-username azureuser ^
                     --public-ip-sku Standard ^

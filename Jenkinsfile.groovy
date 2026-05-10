@@ -5,6 +5,7 @@ pipeline {
         choice(name: 'ACTION', choices: ['BUILD', 'DEPLOY', 'STOP'], description: 'The action to perform: BUILD a new image, DEPLOY an instance from an image, or STOP a running instance.')
         choice(name: 'CLOUD', choices: ['AWS', 'GCP', 'AZURE'], description: 'The target cloud provider.')
         
+        string(name: 'BRANCH_NAME', defaultValue: 'development', description: 'Git branch to checkout and run (e.g., development, main, feature/xyz).')
         // Build Parameters
         string(name: 'IMAGE_NAME', defaultValue: 'multi-cloud-image', description: 'Name for the Packer image (used for BUILD action).')
         choice(name: 'IMAGE_TYPE', choices: ['Linux', 'Windows'], description: 'Operating system type (used for BUILD action).')
@@ -37,7 +38,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 deleteDir()
-                git branch: 'main', credentialsId: 'github-token', url: 'https://github.com/MounikaB-jenkins/multi-cloud-packer.git'
+                git branch: params.BRANCH_NAME, credentialsId: 'github-token', url: 'https://github.com/MounikaB-jenkins/multi-cloud-packer.git'
             }
         }
 

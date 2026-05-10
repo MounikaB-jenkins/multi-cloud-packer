@@ -16,6 +16,12 @@
           <trim>false</trim>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
+          <name>BRANCH_NAME</name>
+          <description>The Git branch to checkout and execute.</description>
+          <defaultValue>development</defaultValue>
+          <trim>true</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
           <name>CLOUD</name>
           <description>The target cloud provider.</description>
           <defaultValue>AWS</defaultValue>
@@ -118,7 +124,7 @@
       </userRemoteConfigs>
       <branches>
         <hudson.plugins.git.BranchSpec>
-          <name>*/main</name>
+          <name>*/${BRANCH_NAME}</name>
         </hudson.plugins.git.BranchSpec>
       </branches>
       <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
