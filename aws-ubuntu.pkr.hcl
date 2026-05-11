@@ -193,7 +193,7 @@ source "googlecompute" "gcp_linux" {
   image_name        = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
   omit_external_ip  = var.disable_public_ip
   use_internal_ip   = var.disable_public_ip
-  storage_locations = var.gcp_storage_locations
+  image_storage_locations = var.gcp_storage_locations
 
   image_labels = {
     name        = var.image_name
@@ -288,7 +288,7 @@ source "googlecompute" "gcp_windows" {
   image_name        = "${var.image_name}-${formatdate("YYYYMMDDhhmmss", timestamp())}"
   omit_external_ip  = var.disable_public_ip
   use_internal_ip   = var.disable_public_ip
-  storage_locations = var.gcp_storage_locations
+  image_storage_locations = var.gcp_storage_locations
 
   image_labels = {
     name        = var.image_name
