@@ -219,12 +219,20 @@ def buildImage() {
     // 2. Run Packer Build
     stage("Build Image for ${params.CLOUD}") {
         try {
+            // Only set PKR_VARs if Jenkins parameters are provided (allows dev.pkrvars.hcl to act as default)
+            if (params.AWS_COPY_REGIONS) env.PKR_VAR_aws_ami_regions = "[\"${params.AWS_COPY_REGIONS.split(',').collect{it.trim()}.join('\",\"')}\"]"
+            if (params.AWS_SHARE_ACCOUNTS) env.PKR_VAR_aws_ami_users = "[\"${params.AWS_SHARE_ACCOUNTS.split(',').collect{it.trim()}.join('\",\"')}\"]"
+            if (params.GCP_STORAGE_LOCATIONS) env.PKR_VAR_gcp_storage_locations = "[\"${params.GCP_STORAGE_LOCATIONS.split(',').collect{it.trim()}.join('\",\"')}\"]"
+            if (params.AZURE_GALLERY_RG) env.PKR_VAR_azure_gallery_rg = params.AZURE_GALLERY_RG
+            if (params.AZURE_GALLERY_NAME) env.PKR_VAR_azure_gallery_name = params.AZURE_GALLERY_NAME
+            if (params.AZURE_GALLERY_REGIONS) env.PKR_VAR_azure_gallery_regions = "[\"${params.AZURE_GALLERY_REGIONS.split(',').collect{it.trim()}.join('\",\"')}\"]"
+
             bat """
             ${PACKER_EXE} init .
-            ${PACKER_EXE} validate -only=${packerSource} ${PACKER_TEMPLATE}
-            
+            ${PACKER_EXE} validate -
             ${PACKER_EXE} build ^
                 -only=${packerSource} ^
+                -var-file="dev.pkrvars.hcl" ^
                 -var "image_name=${params.IMAGE_NAME}" ^
                 -var "image_type=${params.IMAGE_TYPE}" ^
                 -var "region=${params.AWS_REGION}" ^

@@ -70,7 +70,7 @@ pipeline {
                     exit /b 1
                 )
                 packer.exe init .
-                packer.exe validate %PACKER_TEMPLATE%
+                packer.exe validate -var-file="dev.pkrvars.hcl" %PACKER_TEMPLATE%
                 """
             }
         }
@@ -219,14 +219,14 @@ pipeline {
                     
                     def onlyFlag = "--only=${onlyTargets.join(',')}"
 
-                    // Format comma-separated parameters into JSON arrays for Packer variables
-                    env.PKR_VAR_aws_ami_regions = params.AWS_COPY_REGIONS ? "[\"${params.AWS_COPY_REGIONS.split(',').collect{it.trim()}.join('\",\"')}\"]" : "[]"
-                    env.PKR_VAR_aws_ami_users = params.AWS_SHARE_ACCOUNTS ? "[\"${params.AWS_SHARE_ACCOUNTS.split(',').collect{it.trim()}.join('\",\"')}\"]" : "[]"
-
-                    env.PKR_VAR_gcp_storage_locations = params.GCP_STORAGE_LOCATIONS ? "[\"${params.GCP_STORAGE_LOCATIONS.split(',').collect{it.trim()}.join('\",\"')}\"]" : "[]"
-                    env.PKR_VAR_azure_gallery_rg = params.AZURE_GALLERY_RG ?: ""
-                    env.PKR_VAR_azure_gallery_name = params.AZURE_GALLERY_NAME ?: ""
-                    env.PKR_VAR_azure_gallery_regions = params.AZURE_GALLERY_REGIONS ? "[\"${params.AZURE_GALLERY_REGIONS.split(',').collect{it.trim()}.join('\",\"')}\"]" : "[]"
+                    // Only set PKR_VARs if Jenkins parameters are provided (allows dev.pkrvars.hcl to act as default)
+                    if (params.AWS_COPY_REGIONS) env.PKR_VAR_aws_ami_regions = "[\"${params.AWS_COPY_REGIONS.split(',').collect{it.trim()}.join('\",\"')}\"]"
+                    if (params.AWS_SHARE_ACCOUNTS) env.PKR_VAR_aws_ami_users = "[\"${params.AWS_SHARE_ACCOUNTS.split(',').collect{it.trim()}.join('\",\"')}\"]"
+                    
+                    if (params.GCP_STORAGE_LOCATIONS) env.PKR_VAR_gcp_storage_locations = "[\"${params.GCP_STORAGE_LOCATIONS.split(',').collect{it.trim()}.join('\",\"')}\"]"
+                    if (params.AZURE_GALLERY_RG) env.PKR_VAR_azure_gallery_rg = params.AZURE_GALLERY_RG
+                    if (params.AZURE_GALLERY_NAME) env.PKR_VAR_azure_gallery_name = params.AZURE_GALLERY_NAME
+                    if (params.AZURE_GALLERY_REGIONS) env.PKR_VAR_azure_gallery_regions = "[\"${params.AZURE_GALLERY_REGIONS.split(',').collect{it.trim()}.join('\",\"')}\"]"
 
                     withCredentials([
                         usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
@@ -253,6 +253,7 @@ pipeline {
                             -var "azure_tenant_id=${params.AZURE_TENANT_ID}" ^
                             -var "azure_client_id=%ARM_CLIENT_ID%" ^
                             -var "azure_client_secret=%ARM_CLIENT_SECRET%" ^
+                            -var-file="dev.pkrvars.hcl" ^
                             ${onlyFlag} ^
                             %PACKER_TEMPLATE%
                         """
