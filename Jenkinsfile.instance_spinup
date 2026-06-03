@@ -4,7 +4,7 @@ pipeline {
     parameters {
         choice(name: 'ACTION', choices: ['START', 'STOP'], description: 'Action to perform.')
         choice(name: 'CLOUD', choices: ['AWS', 'GCP', 'AZURE'], description: 'Target cloud provider.')
-        string(name: 'BRANCH_NAME', defaultValue: 'development', description: 'Git branch to checkout and run.')
+        string(name: 'BRANCH_NAME', defaultValue: 'develop', description: 'Git branch to checkout and run.')
         string(name: 'IMAGE_ID', defaultValue: '', description: 'AMI ID, GCP Image, or Azure Image ID to launch (required for START if not using latest).')
         string(name: 'INSTANCE_ID', defaultValue: '', description: 'Instance ID to stop (required for STOP).')
         string(name: 'SECRET_NAME', defaultValue: '', description: 'Name of the secret containing the SSH key (e.g. prod-key-1-secret).')
