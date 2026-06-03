@@ -15,6 +15,11 @@ pipeline {
         string(name: 'INSTANCE_ID', defaultValue: '', description: 'The ID of the instance to stop. Required for STOP action.')
         string(name: 'SECRET_NAME', defaultValue: '', description: 'The name of the secret holding the SSH key (e.g., prod-key-1-secret). Required for DEPLOY action.')
 
+        // MongoDB Deployment Parameters
+        choice(name: 'MONGO_OP', choices: ['CREATE', 'INSERT', 'UPDATE', 'DELETE'], description: 'MongoDB operation to perform during DEPLOY.')
+        string(name: 'MONGO_COLLECTION', defaultValue: 'sampleData', description: 'MongoDB collection to operate on.')
+        string(name: 'MONGO_DOCUMENT', defaultValue: '{ "name": "John Doe", "status": "created", "role": "admin" }', description: 'MongoDB document(s) or query arguments for the operation (e.g., {"name":"John"} or {}, {$set:{"status":"updated"}}).')
+
         // Cloud Configuration
         string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region for all operations.')
         string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID')
@@ -290,7 +295,23 @@ def deployInstance() {
         }
 
         if (params.CLOUD == 'AWS') {
-            writeFile file: 'setup_mongo.sh', text: '''#!/bin/bash
+            def mongoEval = ""
+            switch(params.MONGO_OP) {
+                case 'CREATE':
+                    mongoEval = "db.createCollection('${params.MONGO_COLLECTION}');\nprint('Collection created.');"
+                    break
+                case 'INSERT':
+                    mongoEval = "db.${params.MONGO_COLLECTION}.insertOne(${params.MONGO_DOCUMENT});\nprint('Document inserted.');"
+                    break
+                case 'UPDATE':
+                    mongoEval = "db.${params.MONGO_COLLECTION}.updateMany(${params.MONGO_DOCUMENT});\nprint('Documents updated.');"
+                    break
+                case 'DELETE':
+                    mongoEval = "db.${params.MONGO_COLLECTION}.deleteMany(${params.MONGO_DOCUMENT});\nprint('Documents deleted.');"
+                    break
+            }
+
+            writeFile file: 'setup_mongo.sh', text: """#!/bin/bash
 sudo apt-get update
 sudo apt-get install -y gnupg curl
 curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor --yes
@@ -304,18 +325,11 @@ sudo systemctl enable mongod
 echo "Waiting for MongoDB to start..."
 sleep 10
 
-mongosh --eval "
+cat << 'EOF' | mongosh
 use devdb;
-db.createCollection('sampleData');
-db.sampleData.insertOne({ name: 'John Doe', status: 'created', role: 'admin' });
-print('--- Data After Insert ---');
-printjson(db.sampleData.findOne({ name: 'John Doe' }));
-
-db.sampleData.updateOne({ name: 'John Doe' }, { $set: { status: 'updated' } });
-print('--- Data After Update ---');
-printjson(db.sampleData.findOne({ name: 'John Doe' }));
-"
-'''
+${mongoEval}
+EOF
+"""
         }
         switch(params.CLOUD) {
             case 'AWS':
