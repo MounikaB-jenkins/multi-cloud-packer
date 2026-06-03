@@ -343,10 +343,10 @@ printjson(db.sampleData.findOne({ name: 'John Doe' }));
                 
                 :: Fix SSH key permissions for Windows
                 icacls private_key.pem /inheritance:r /Q
-                icacls private_key.pem /grant:r "%USERNAME%:(R)" /Q
+                for /f "tokens=*" %%a in ('whoami') do icacls private_key.pem /grant:r "%%a:(R)" /Q
                 
                 echo Waiting 60 seconds for SSH service to become available...
-                timeout /t 60 /nobreak
+                ping 127.0.0.1 -n 61 > nul
                 
                 echo Uploading and executing MongoDB setup script...
                 scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ubuntu@%PUBLIC_IP%:/tmp/setup_mongo.sh
@@ -406,7 +406,7 @@ printjson(db.sampleData.findOne({ name: 'John Doe' }));
                 
                 :: Fix SSH key permissions on Windows
                 icacls private_key.pem /inheritance:r /Q
-                icacls private_key.pem /grant:r "%USERNAME%:(R)" /Q
+                for /f "tokens=*" %%a in ('whoami') do icacls private_key.pem /grant:r "%%a:(R)" /Q
                 
                 :: Generate public key from private key
                 ssh-keygen -y -f private_key.pem > public_key.pub
