@@ -109,7 +109,7 @@ def deployInstance() {
 
             :: 3. Launch
             set KEY_NAME=${params.SECRET_NAME.replace('-secret','')}
-            for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id %TARGET_IMAGE% --instance-type t2.micro --security-group-ids %SG_ID% --key-name %KEY_NAME% --associate-public-ip-address --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
+            for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id %TARGET_IMAGE% --instance-type t3.micro --security-group-ids %SG_ID% --key-name %KEY_NAME% --associate-public-ip-address --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
             call aws ec2 wait instance-running --instance-ids %INST_ID%
             for /f "tokens=*" %%i in ('call aws ec2 describe-instances --instance-ids %INST_ID% --query "Reservations[0].Instances[0].PublicIpAddress" --output text') do set PUBLIC_IP=%%i
             
