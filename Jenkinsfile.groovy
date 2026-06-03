@@ -282,6 +282,13 @@ def buildImage() {
 
 def deployInstance() {
     stage("Deploy Instance to ${params.CLOUD}") {
+        if (params.IMAGE_ID == '') {
+            error "IMAGE_ID parameter is required for DEPLOY action. Please provide the AMI ID, GCP Image Name, or Azure Image ID."
+        }
+        if (params.SECRET_NAME == '') {
+            error "SECRET_NAME parameter is required for DEPLOY action. Please provide the name of the secret holding the SSH key."
+        }
+
         if (params.CLOUD == 'AWS') {
             writeFile file: 'setup_mongo.sh', text: '''#!/bin/bash
 sudo apt-get update
