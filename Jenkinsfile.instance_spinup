@@ -84,6 +84,34 @@ pipeline {
 }
 
 def deployInstance() {
+    if (params.CLOUD == 'AWS') {
+        writeFile file: 'setup_mongo.sh', text: '''#!/bin/bash
+sudo apt-get update
+sudo apt-get install -y gnupg curl
+curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor --yes
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+sudo apt-get update
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mongodb-org
+
+sudo systemctl start mongod
+sudo systemctl enable mongod
+
+echo "Waiting for MongoDB to start..."
+sleep 10
+
+mongosh --eval "
+use devdb;
+db.createCollection('sampleData');
+db.sampleData.insertOne({ name: 'John Doe', status: 'created', role: 'admin' });
+print('--- Data After Insert ---');
+printjson(db.sampleData.findOne({ name: 'John Doe' }));
+
+db.sampleData.updateOne({ name: 'John Doe' }, { $set: { status: 'updated' } });
+print('--- Data After Update ---');
+printjson(db.sampleData.findOne({ name: 'John Doe' }));
+"
+'''
+    }
     switch(params.CLOUD) {
         case 'AWS':
             bat """
@@ -115,6 +143,24 @@ def deployInstance() {
             
             echo TARGET_INSTANCE_ID=%INST_ID% > env.props
             echo PUBLIC_IP=%PUBLIC_IP% >> env.props
+            
+            :: Retrieve SSH key from AWS Secrets Manager
+            echo Retrieving SSH key from Secrets Manager...
+            call aws secretsmanager get-secret-value --secret-id ${params.SECRET_NAME} --query SecretString --output text > private_key.pem
+            
+            :: Fix SSH key permissions for Windows
+            icacls private_key.pem /inheritance:r /Q
+            icacls private_key.pem /grant:r "%USERNAME%:(R)" /Q
+            
+            echo Waiting 60 seconds for SSH service to become available...
+            timeout /t 60 /nobreak
+            
+            echo Uploading and executing MongoDB setup script...
+            scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ubuntu@%PUBLIC_IP%:/tmp/setup_mongo.sh
+            ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@%PUBLIC_IP% "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+            
+            :: Cleanup local key
+            if exist private_key.pem del private_key.pem
             """
             break
             
