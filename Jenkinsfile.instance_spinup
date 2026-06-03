@@ -8,6 +8,12 @@ pipeline {
         string(name: 'IMAGE_ID', defaultValue: '', description: 'AMI ID, GCP Image, or Azure Image ID to launch (required for START if not using latest).')
         string(name: 'INSTANCE_ID', defaultValue: '', description: 'Instance ID to stop (required for STOP).')
         string(name: 'SECRET_NAME', defaultValue: '', description: 'Name of the secret containing the SSH key (e.g. prod-key-1-secret).')
+        
+        // MongoDB Deployment Parameters
+        choice(name: 'MONGO_OP', choices: ['CREATE', 'INSERT', 'UPDATE', 'DELETE'], description: 'MongoDB operation to perform during START.')
+        string(name: 'MONGO_COLLECTION', defaultValue: 'sampleData', description: 'MongoDB collection to operate on.')
+        string(name: 'MONGO_DOCUMENT', defaultValue: '{ "name": "John Doe", "status": "created", "role": "admin" }', description: 'MongoDB document(s) or query arguments for the operation.')
+
         string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region.')
         string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID.')
         string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone.')
