@@ -11,8 +11,11 @@ pipeline {
         choice(name: 'MONGO_ACTION', choices: [
             'LIST_DATABASES', 
             'CREATE_DATABASE', 
+            'DELETE_DATABASE',
             'LIST_COLLECTIONS', 
             'CREATE_COLLECTION', 
+            'UPDATE_COLLECTION',
+            'DELETE_COLLECTION',
             'INSERT_DOCUMENT', 
             'UPDATE_DOCUMENT', 
             'DELETE_DOCUMENT'
@@ -20,6 +23,7 @@ pipeline {
         
         string(name: 'DB_NAME', defaultValue: '', description: 'Target Database Name (e.g., bankingdb). Required for most operations. If provided during LIST_DATABASES, it acts as a search filter.')
         string(name: 'COLLECTION_NAME', defaultValue: '', description: 'Target Collection Name (e.g., customers). If provided during LIST_COLLECTIONS, it acts as a search filter.')
+        string(name: 'NEW_COLLECTION_NAME', defaultValue: '', description: 'New Collection Name (e.g., archived_customers). Used only for the UPDATE_COLLECTION action.')
         
         string(name: 'DOC_FILTER', defaultValue: '{}', description: 'JSON Filter for Update/Delete operations (e.g., { "name": "John" }).')
         string(name: 'DOC_PAYLOAD', defaultValue: '{}', description: 'JSON Payload for Insert/Update operations (e.g., { "status": "active" } or { "$set": { "status": "active" } }).')
@@ -64,6 +68,13 @@ pipeline {
                             print('Database ${params.DB_NAME} successfully created and initialized.');
                             """
                             break
+                        case 'DELETE_DATABASE':
+                            jsScript = """
+                            use ${params.DB_NAME};
+                            db.dropDatabase();
+                            print('Database ${params.DB_NAME} successfully deleted.');
+                            """
+                            break
                         case 'LIST_COLLECTIONS':
                             jsScript = """
                             use ${params.DB_NAME};
@@ -83,6 +94,20 @@ pipeline {
                             use ${params.DB_NAME};
                             db.createCollection('${params.COLLECTION_NAME}');
                             print('Collection ${params.COLLECTION_NAME} created successfully.');
+                            """
+                            break
+                        case 'UPDATE_COLLECTION':
+                            jsScript = """
+                            use ${params.DB_NAME};
+                            db.${params.COLLECTION_NAME}.renameCollection('${params.NEW_COLLECTION_NAME}');
+                            print('Collection ${params.COLLECTION_NAME} successfully renamed to ${params.NEW_COLLECTION_NAME}.');
+                            """
+                            break
+                        case 'DELETE_COLLECTION':
+                            jsScript = """
+                            use ${params.DB_NAME};
+                            db.${params.COLLECTION_NAME}.drop();
+                            print('Collection ${params.COLLECTION_NAME} successfully deleted.');
                             """
                             break
                         case 'INSERT_DOCUMENT':
