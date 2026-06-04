@@ -14,7 +14,7 @@ pipeline {
             'STOP_SERVER',
             'LIST_DATABASES', 
             'CREATE_DATABASE', 
-            'DELETE_DATABASE',git
+            'DELETE_DATABASE',
             'LIST_COLLECTIONS', 
             'CREATE_COLLECTION', 
             'UPDATE_COLLECTION',
