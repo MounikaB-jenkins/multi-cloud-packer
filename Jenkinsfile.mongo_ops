@@ -9,6 +9,9 @@ pipeline {
         
         // MongoDB Operations
         choice(name: 'MONGO_ACTION', choices: [
+            'CHECK_STATUS',
+            'START_SERVER',
+            'STOP_SERVER',
             'LIST_DATABASES', 
             'CREATE_DATABASE', 
             'DELETE_DATABASE',
@@ -44,8 +47,25 @@ pipeline {
                         error "PUBLIC_IP and SECRET_NAME are required to connect to the instance."
                     }
                     
+                    // Retrieve MongoDB Credentials from AWS Secrets Manager
+                    withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                        bat """@echo off
+                        set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
+                        set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
+                        aws secretsmanager get-secret-value --secret-id mongodb-creds --query SecretString --output text --region ${params.AWS_REGION} > mongo_creds.json
+                        """
+                    }
+                    def mongoCreds = readJSON file: 'mongo_creds.json'
+                    def mongoUser = mongoCreds.username
+                    def mongoPass = mongoCreds.password
+                    bat "del mongo_creds.json"
+
                     def jsScript = ""
                     switch(params.MONGO_ACTION) {
+                        case 'CHECK_STATUS':
+                        case 'START_SERVER':
+                        case 'STOP_SERVER':
+                            break
                         case 'LIST_DATABASES':
                             jsScript = """
                             const dbs = db.adminCommand('listDatabases').databases;
@@ -133,11 +153,53 @@ pipeline {
                             break
                     }
 
-                    writeFile file: 'mongo_script.sh', text: """#!/bin/bash
-cat << 'EOF' | mongosh --quiet
+                    def scriptText = ""
+                    if (params.MONGO_ACTION == 'CHECK_STATUS') {
+                        scriptText = """#!/bin/bash
+echo "--- MongoDB Status Check ---"
+if sudo systemctl is-active --quiet mongod; then
+    echo "[Service] mongod is UP"
+else
+    echo "[Service] mongod is DOWN"
+fi
+
+if mongosh -u "${mongoUser}" -p "${mongoPass}" --authenticationDatabase admin --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
+    echo "[Connection] MongoDB is accepting authenticated connections (UP)"
+else
+    echo "[Connection] MongoDB connection/authentication failed (DOWN)"
+fi
+"""
+                    } else if (params.MONGO_ACTION == 'START_SERVER') {
+                        scriptText = """#!/bin/bash
+echo "Starting MongoDB server..."
+sudo systemctl start mongod
+if sudo systemctl is-active --quiet mongod; then
+    echo "MongoDB server started successfully."
+else
+    echo "Failed to start MongoDB server."
+    exit 1
+fi
+"""
+                    } else if (params.MONGO_ACTION == 'STOP_SERVER') {
+                        scriptText = """#!/bin/bash
+echo "Stopping MongoDB server..."
+sudo systemctl stop mongod
+if ! sudo systemctl is-active --quiet mongod; then
+    echo "MongoDB server stopped successfully."
+else
+    echo "Failed to stop MongoDB server."
+    exit 1
+fi
+"""
+                    } else {
+                        scriptText = """#!/bin/bash
+cat << 'EOF' | mongosh -u "${mongoUser}" -p "${mongoPass}" --authenticationDatabase admin --quiet
 ${jsScript}
 EOF
 """
+                    }
+
+                    writeFile file: 'mongo_script.sh', text: scriptText
                 }
             }
         }

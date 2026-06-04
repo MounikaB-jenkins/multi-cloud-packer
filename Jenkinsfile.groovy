@@ -311,6 +311,15 @@ def deployInstance() {
                     break
             }
 
+                // Retrieve MongoDB Credentials from AWS Secrets Manager
+                bat """@echo off
+                aws secretsmanager get-secret-value --secret-id mongodb-creds --query SecretString --output text --region ${params.AWS_REGION} > mongo_creds.json
+                """
+                def mongoCreds = readJSON file: 'mongo_creds.json'
+                def mongoUser = mongoCreds.username
+                def mongoPass = mongoCreds.password
+                bat "del mongo_creds.json"
+
             writeFile file: 'setup_mongo.sh', text: """#!/bin/bash
 sudo apt-get update
 sudo apt-get install -y gnupg curl
@@ -325,7 +334,17 @@ sudo systemctl enable mongod
 echo "Waiting for MongoDB to start..."
 sleep 10
 
-cat << 'EOF' | mongosh
+echo "Creating admin user..."
+mongosh admin --eval "db.createUser({user: '${mongoUser}', pwd: '${mongoPass}', roles: [{role: 'root', db: 'admin'}]})"
+
+echo "Enabling authentication..."
+sudo sed -i 's/^#security:/security:\\n  authorization: enabled/' /etc/mongod.conf
+
+sudo systemctl restart mongod
+echo "Waiting for MongoDB to restart with auth..."
+sleep 10
+
+cat << 'EOF' | mongosh -u "${mongoUser}" -p "${mongoPass}" --authenticationDatabase admin
 use devdb;
 ${mongoEval}
 EOF
