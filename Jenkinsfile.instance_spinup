@@ -89,6 +89,8 @@ def deployInstance() {
 
         // Retrieve MongoDB Credentials from AWS Secrets Manager
         bat """@echo off
+        set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
+        set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
         aws secretsmanager get-secret-value --secret-id mongodb-creds --query SecretString --output text --region ${params.AWS_REGION} > mongo_creds.json
         """
         def mongoCreds = readJSON file: 'mongo_creds.json'
@@ -111,7 +113,7 @@ echo "Waiting for MongoDB to start..."
 sleep 10
 
 echo "Creating admin user..."
-mongosh admin --eval "db.createUser({user: '${mongoUser}', pwd: '${mongoPass}', roles: [{role: 'root', db: 'admin'}]})"
+mongosh admin --eval 'db.createUser({user: "${mongoUser}", pwd: "${mongoPass}", roles: [{role: "root", db: "admin"}]})'
 
 echo "Enabling authentication..."
 sudo sed -i 's/^#security:/security:\\n  authorization: enabled/' /etc/mongod.conf
