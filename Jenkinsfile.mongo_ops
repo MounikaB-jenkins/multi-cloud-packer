@@ -1,0 +1,188 @@
+pipeline {
+    agent any
+
+    parameters {
+        // Connection Parameters
+        string(name: 'PUBLIC_IP', defaultValue: '', description: 'Public IP of the EC2/GCP/Azure instance running MongoDB.')
+        choice(name: 'CLOUD', choices: ['AWS', 'GCP', 'AZURE'], description: 'Cloud provider where your SSH key is stored.')
+        string(name: 'SECRET_NAME', defaultValue: '', description: 'Name of the secret containing the SSH key (e.g., prod-key-1-secret).')
+        
+        // MongoDB Operations
+        choice(name: 'MONGO_ACTION', choices: [
+            'LIST_DATABASES', 
+            'CREATE_DATABASE', 
+            'LIST_COLLECTIONS', 
+            'CREATE_COLLECTION', 
+            'INSERT_DOCUMENT', 
+            'UPDATE_DOCUMENT', 
+            'DELETE_DOCUMENT'
+        ], description: 'MongoDB operation to perform.')
+        
+        string(name: 'DB_NAME', defaultValue: '', description: 'Target Database Name (e.g., bankingdb). Required for most operations. If provided during LIST_DATABASES, it acts as a search filter.')
+        string(name: 'COLLECTION_NAME', defaultValue: '', description: 'Target Collection Name (e.g., customers). If provided during LIST_COLLECTIONS, it acts as a search filter.')
+        
+        string(name: 'DOC_FILTER', defaultValue: '{}', description: 'JSON Filter for Update/Delete operations (e.g., { "name": "John" }).')
+        string(name: 'DOC_PAYLOAD', defaultValue: '{}', description: 'JSON Payload for Insert/Update operations (e.g., { "status": "active" } or { "$set": { "status": "active" } }).')
+
+        // Cloud Configuration
+        string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region (if using AWS).')
+        string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID (if using GCP).')
+        string(name: 'AZURE_VAULT_NAME', defaultValue: 'packer-vault', description: 'Azure Key Vault name (if using Azure).')
+        string(name: 'AZURE_SUBSCRIPTION_ID', defaultValue: 'b943e408-73c1-4cea-b780-689120606f67', description: 'Azure subscription ID (if using Azure).')
+        string(name: 'AZURE_TENANT_ID', defaultValue: '8344e416-02b8-4b70-a912-1995cc408f19', description: 'Azure tenant ID (if using Azure).')
+    }
+
+    stages {
+        stage('Prepare Script') {
+            steps {
+                script {
+                    if (params.PUBLIC_IP == '' || params.SECRET_NAME == '') {
+                        error "PUBLIC_IP and SECRET_NAME are required to connect to the instance."
+                    }
+                    
+                    def jsScript = ""
+                    switch(params.MONGO_ACTION) {
+                        case 'LIST_DATABASES':
+                            jsScript = """
+                            const dbs = db.adminCommand('listDatabases').databases;
+                            const target = '${params.DB_NAME}';
+                            if (target) {
+                                const found = dbs.find(d => d.name === target);
+                                if (found) print('Database found: ' + target);
+                                else print('Database not found: ' + target);
+                            } else {
+                                print('--- All Databases ---');
+                                dbs.forEach(d => print(d.name));
+                            }
+                            """
+                            break
+                        case 'CREATE_DATABASE':
+                            // MongoDB databases are strictly created when a collection/document is inserted.
+                            jsScript = """
+                            use ${params.DB_NAME};
+                            db.createCollection('${params.COLLECTION_NAME}' || 'init_collection');
+                            print('Database ${params.DB_NAME} successfully created and initialized.');
+                            """
+                            break
+                        case 'LIST_COLLECTIONS':
+                            jsScript = """
+                            use ${params.DB_NAME};
+                            const colls = db.getCollectionNames();
+                            const target = '${params.COLLECTION_NAME}';
+                            if (target) {
+                                if (colls.includes(target)) print('Collection found: ' + target);
+                                else print('Collection not found: ' + target);
+                            } else {
+                                print('--- Collections in ${params.DB_NAME} ---');
+                                colls.forEach(c => print(c));
+                            }
+                            """
+                            break
+                        case 'CREATE_COLLECTION':
+                            jsScript = """
+                            use ${params.DB_NAME};
+                            db.createCollection('${params.COLLECTION_NAME}');
+                            print('Collection ${params.COLLECTION_NAME} created successfully.');
+                            """
+                            break
+                        case 'INSERT_DOCUMENT':
+                            jsScript = """
+                            use ${params.DB_NAME};
+                            db.${params.COLLECTION_NAME}.insertOne(${params.DOC_PAYLOAD});
+                            print('Document inserted into ${params.COLLECTION_NAME}.');
+                            """
+                            break
+                        case 'UPDATE_DOCUMENT':
+                            jsScript = """
+                            use ${params.DB_NAME};
+                            db.${params.COLLECTION_NAME}.updateMany(${params.DOC_FILTER}, ${params.DOC_PAYLOAD});
+                            print('Documents updated in ${params.COLLECTION_NAME}.');
+                            """
+                            break
+                        case 'DELETE_DOCUMENT':
+                            jsScript = """
+                            use ${params.DB_NAME};
+                            db.${params.COLLECTION_NAME}.deleteMany(${params.DOC_FILTER});
+                            print('Documents deleted from ${params.COLLECTION_NAME}.');
+                            """
+                            break
+                    }
+
+                    writeFile file: 'mongo_script.sh', text: """#!/bin/bash
+cat << 'EOF' | mongosh --quiet
+${jsScript}
+EOF
+"""
+                }
+            }
+        }
+
+        stage('Execute Operation via SSH') {
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
+                    file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
+                    usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
+                ]) {
+                    script {
+                        if (params.CLOUD == 'AWS') {
+                            bat """
+                            @echo off
+                            set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
+                            set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
+                            echo Retrieving SSH key from AWS Secrets Manager...
+                            call aws secretsmanager get-secret-value --secret-id ${params.SECRET_NAME} --query SecretString --output text --region ${params.AWS_REGION} > private_key.pem
+                            """
+                        } else if (params.CLOUD == 'GCP') {
+                            bat """
+                            @echo off
+                            set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
+                            call gcloud auth activate-service-account --key-file="%GOOGLE_APPLICATION_CREDENTIALS%" --quiet
+                            echo Retrieving SSH key from GCP Secret Manager...
+                            call gcloud secrets versions access latest --secret="${params.SECRET_NAME}" --project="${params.GCP_PROJECT}" > private_key.pem
+                            """
+                        } else if (params.CLOUD == 'AZURE') {
+                            bat """
+                            @echo off
+                            set ARM_CLIENT_ID=%ARM_CLIENT_ID%
+                            set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
+                            call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID} >nul 2>&1
+                            echo Retrieving SSH key from Azure Key Vault...
+                            call az keyvault secret show --vault-name ${params.AZURE_VAULT_NAME} --name ${params.SECRET_NAME} --query value -o tsv > private_key.pem
+                            """
+                        }
+
+                        // Execute the SSH commands
+                        bat """
+                        @echo off
+                        :: Fix SSH key permissions for Windows Jenkins Agent
+                        icacls private_key.pem /inheritance:r /Q
+                        for /f "tokens=*" %%a in ('whoami') do icacls private_key.pem /grant:r "%%a:(R)" /Q
+                        
+                        echo --------------------------------------------------
+                        echo Uploading operation script to instance...
+                        scp -i private_key.pem -o StrictHostKeyChecking=no mongo_script.sh ubuntu@${params.PUBLIC_IP}:/tmp/mongo_script.sh
+                        
+                        echo Executing MongoDB operation: ${params.MONGO_ACTION}
+                        ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@${params.PUBLIC_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                        echo --------------------------------------------------
+                        
+                        :: Cleanup
+                        del private_key.pem
+                        del mongo_script.sh
+                        """
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                if (fileExists('private_key.pem')) { bat "del private_key.pem" }
+                if (fileExists('mongo_script.sh')) { bat "del mongo_script.sh" }
+            }
+        }
+    }
+}
