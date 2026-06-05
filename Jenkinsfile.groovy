@@ -13,6 +13,7 @@ pipeline {
         // Deploy/Stop Parameters
         string(name: 'IMAGE_ID', defaultValue: '', description: 'The Image ID to launch (AMI ID, GCP Image Name, Azure Image ID). Required for DEPLOY action.')
         string(name: 'INSTANCE_ID', defaultValue: '', description: 'The ID of the instance to stop. Required for STOP action.')
+        string(name: 'BASTION_IP', defaultValue: '', description: 'Public IP of the Bastion Host. Required for SSH access to private instances.')
         string(name: 'SECRET_NAME', defaultValue: '', description: 'The name of the secret holding the SSH key (e.g., prod-key-1-secret). Required for DEPLOY action.')
 
         // MongoDB Deployment Parameters
@@ -113,7 +114,7 @@ pipeline {
                     body += "Secret Name: ${env.KEY_NAME}-secret\n"
                 } else if (params.ACTION == 'DEPLOY') {
                     body += "Instance ID: ${env.TARGET_INSTANCE_ID}\n"
-                    body += "Public IP: ${env.PUBLIC_IP}\n"
+                    body += "Private IP: ${env.PRIVATE_IP}\n"
                 } else {
                     body += "Instance ID: ${params.INSTANCE_ID}\n"
                 }
@@ -377,12 +378,12 @@ EOF
                 )
                 
                 set KEY_NAME=${params.SECRET_NAME.replace('-secret','')}
-                for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t3.micro --security-group-ids %SG_ID% --key-name %KEY_NAME% --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION}') do set INST_ID=%%i
+                for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t3.micro --security-group-ids %SG_ID% --key-name %KEY_NAME% --no-associate-public-ip-address --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION}') do set INST_ID=%%i
                 call aws ec2 wait instance-running --instance-ids %INST_ID% --region ${params.AWS_REGION}
-                for /f "tokens=*" %%i in ('call aws ec2 describe-instances --instance-ids %INST_ID% --query "Reservations[0].Instances[0].PublicIpAddress" --output text --region ${params.AWS_REGION}') do set PUBLIC_IP=%%i
+                for /f "tokens=*" %%i in ('call aws ec2 describe-instances --instance-ids %INST_ID% --query "Reservations[0].Instances[0].PrivateIpAddress" --output text --region ${params.AWS_REGION}') do set PRIVATE_IP=%%i
                 
                 echo TARGET_INSTANCE_ID=%INST_ID% > env.props
-                echo PUBLIC_IP=%PUBLIC_IP% >> env.props
+                echo PRIVATE_IP=%PRIVATE_IP% >> env.props
                 
                 :: Retrieve SSH key from AWS Secrets Manager
                 echo Retrieving SSH key from Secrets Manager...
@@ -395,9 +396,9 @@ EOF
                 echo Waiting 60 seconds for SSH service to become available...
                 ping 127.0.0.1 -n 61 > nul
                 
-                echo Uploading and executing MongoDB setup script...
-                scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ubuntu@%PUBLIC_IP%:/tmp/setup_mongo.sh
-                ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@%PUBLIC_IP% "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                echo Uploading and executing MongoDB setup script via Bastion...
+                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" setup_mongo.sh ubuntu@%PRIVATE_IP%:/tmp/setup_mongo.sh
+                ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" ubuntu@%PRIVATE_IP% "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
                 
                 :: Cleanup local key
                 if exist private_key.pem del private_key.pem
@@ -417,16 +418,17 @@ EOF
                     --zone=${params.GCP_ZONE} ^
                     --machine-type=e2-micro ^
                     --tags=prod-web ^
-                    --format="get(networkInterfaces[0].accessConfigs[0].natIP)" > nat_ip.txt
+                    --no-address ^
+                    --format="get(networkInterfaces[0].networkIP)" > private_ip.txt
                 
                 if !ERRORLEVEL! neq 0 (
                     echo GCP Instance launch failed.
                     exit /b !ERRORLEVEL!
                 )
                 
-                set /p PUBLIC_IP=<nat_ip.txt
+                set /p PRIVATE_IP=<private_ip.txt
                 echo TARGET_INSTANCE_ID=%INSTANCE_NAME% > env.props
-                echo PUBLIC_IP=!PUBLIC_IP! >> env.props
+                echo PRIVATE_IP=!PRIVATE_IP! >> env.props
                 """
                 break
             case 'AZURE':
@@ -465,10 +467,10 @@ EOF
                     --size Standard_B2ats_v2 ^
                     --image "${params.IMAGE_ID}" ^
                     --admin-username azureuser ^
-                    --public-ip-sku Standard ^
+                    --public-ip-address "" ^
                     --nsg-rule SSH ^
                     --ssh-key-values public_key.pub ^
-                    --query "{ip:publicIpAddress, id:id}" --output json > vm_info.json
+                    --query "{ip:privateIps, id:id}" --output json > vm_info.json
 
                 set VM_EXIT_CODE=!ERRORLEVEL!
                 
@@ -485,12 +487,12 @@ EOF
                 """
                 def vmInfo = readJSON file: 'vm_info.json'
                 env.TARGET_INSTANCE_ID = vmInfo.id
-                env.PUBLIC_IP = vmInfo.ip
+                env.PRIVATE_IP = vmInfo.ip
                 return // Skip property reading for Azure
         }
         def props = readProperties file: 'env.props'
         env.TARGET_INSTANCE_ID = props['TARGET_INSTANCE_ID']
-        env.PUBLIC_IP = props['PUBLIC_IP']
+        env.PRIVATE_IP = props['PRIVATE_IP']
     }
 }
 

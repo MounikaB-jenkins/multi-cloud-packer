@@ -3,7 +3,8 @@ pipeline {
 
     parameters {
         // Connection Parameters
-        string(name: 'PUBLIC_IP', defaultValue: '', description: 'Public IP of the EC2/GCP/Azure instance running MongoDB.')
+        string(name: 'PRIVATE_IP', defaultValue: '', description: 'Private IP of the EC2/GCP/Azure instance running MongoDB.')
+        string(name: 'BASTION_IP', defaultValue: '', description: 'Public IP of the Bastion Host.')
         choice(name: 'CLOUD', choices: ['AWS', 'GCP', 'AZURE'], description: 'Cloud provider where your SSH key is stored.')
         string(name: 'SECRET_NAME', defaultValue: '', description: 'Name of the secret containing the SSH key (e.g., prod-key-1-secret).')
         
@@ -43,8 +44,8 @@ pipeline {
         stage('Prepare Script') {
             steps {
                 script {
-                    if (params.PUBLIC_IP == '' || params.SECRET_NAME == '') {
-                        error "PUBLIC_IP and SECRET_NAME are required to connect to the instance."
+                    if (params.PRIVATE_IP == '' || params.SECRET_NAME == '' || params.BASTION_IP == '') {
+                        error "PRIVATE_IP, BASTION_IP, and SECRET_NAME are required to connect to the instance."
                     }
                     
                     // Retrieve MongoDB Credentials from AWS Secrets Manager
@@ -247,11 +248,11 @@ EOF
                         for /f "tokens=*" %%a in ('whoami') do icacls private_key.pem /grant:r "%%a:(R)" /Q
                         
                         echo --------------------------------------------------
-                        echo Uploading operation script to instance...
-                        scp -i private_key.pem -o StrictHostKeyChecking=no mongo_script.sh ubuntu@${params.PUBLIC_IP}:/tmp/mongo_script.sh
+                        echo Uploading operation script to instance via Bastion...
+                        scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" mongo_script.sh ubuntu@${params.PRIVATE_IP}:/tmp/mongo_script.sh
                         
                         echo Executing MongoDB operation: ${params.MONGO_ACTION}
-                        ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@${params.PUBLIC_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                        ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" ubuntu@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
                         echo --------------------------------------------------
                         
                         :: Cleanup
