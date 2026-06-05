@@ -163,7 +163,7 @@ else
     echo "[Service] mongod is DOWN"
 fi
 
-if mongosh -u '${mongoUser}' -p '${mongoPass}' --authenticationDatabase admin --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
+if mongosh admin -u '${mongoUser}' -p '${mongoPass}' --eval "db.adminCommand({ping: 1})" --quiet >/dev/null 2>&1; then
     echo "[Connection] MongoDB is accepting authenticated connections (UP)"
 else
     echo "[Connection] MongoDB connection/authentication failed (DOWN)"
@@ -193,7 +193,7 @@ fi
 """
                     } else {
                         scriptText = """#!/bin/bash
-cat << 'EOF' | mongosh -u '${mongoUser}' -p '${mongoPass}' --authenticationDatabase admin --quiet
+cat << 'EOF' | mongosh admin -u '${mongoUser}' -p '${mongoPass}' --quiet
 ${jsScript}
 EOF
 """

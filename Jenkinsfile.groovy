@@ -313,6 +313,8 @@ def deployInstance() {
 
                 // Retrieve MongoDB Credentials from AWS Secrets Manager
                 bat """@echo off
+                set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
+                set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
                 aws secretsmanager get-secret-value --secret-id mongodb-creds --query SecretString --output text --region ${params.AWS_REGION} > mongo_creds.json
                 """
                 def mongoCreds = readJSON file: 'mongo_creds.json'
@@ -326,29 +328,37 @@ sudo apt-get install -y gnupg curl
 curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor --yes
 echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
 sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mongodb-org redis-server
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mongodb-org
 
 sudo systemctl start mongod
 sudo systemctl enable mongod
 
-echo "Starting Redis server..."
-sudo systemctl start redis-server
-sudo systemctl enable redis-server
-
 echo "Waiting for MongoDB to start..."
-sleep 10
+for i in {1..30}; do
+    if mongosh --eval "db.adminCommand({ping: 1})" --quiet >/dev/null 2>&1; then
+        break
+    fi
+    if [ \$i -eq 30 ]; then echo "Timeout waiting for MongoDB." && exit 1; fi
+    sleep 2
+done
 
 echo "Creating admin user..."
-mongosh admin --eval "db.createUser({user: '${mongoUser}', pwd: '${mongoPass}', roles: [{role: 'root', db: 'admin'}]})"
+mongosh admin --eval 'db.createUser({user: "${mongoUser}", pwd: "${mongoPass}", roles: [{role: "root", db: "admin"}]})'
 
 echo "Enabling authentication..."
 sudo sed -i 's/^#security:/security:\\n  authorization: enabled/' /etc/mongod.conf
 
 sudo systemctl restart mongod
 echo "Waiting for MongoDB to restart with auth..."
-sleep 10
+for i in {1..30}; do
+    if mongosh admin -u '${mongoUser}' -p '${mongoPass}' --eval "db.adminCommand({ping: 1})" --quiet >/dev/null 2>&1; then
+        break
+    fi
+    if [ \$i -eq 30 ]; then echo "Timeout waiting for authenticated MongoDB." && exit 1; fi
+    sleep 2
+done
 
-cat << 'EOF' | mongosh -u "${mongoUser}" -p "${mongoPass}" --authenticationDatabase admin
+cat << 'EOF' | mongosh admin -u '${mongoUser}' -p '${mongoPass}' --quiet
 use devdb;
 ${mongoEval}
 EOF
