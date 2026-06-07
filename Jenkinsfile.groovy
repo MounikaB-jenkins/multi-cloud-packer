@@ -368,22 +368,35 @@ EOF
         switch(params.CLOUD) {
             case 'AWS':
                 bat """
+                @echo off
+                setlocal enabledelayedexpansion
                 set SG_ID=
                 for /f "tokens=*" %%i in ('call aws ec2 describe-security-groups --group-names production-web-sg --query "SecurityGroups[0].GroupId" --output text --region ${params.AWS_REGION} 2^>nul') do set SG_ID=%%i
-                if "%SG_ID%"=="" (
+                if "!SG_ID!"=="" (
                     for /f "tokens=*" %%i in ('call aws ec2 create-security-group --group-name production-web-sg --description "Production Web SG" --query "GroupId" --output text --region ${params.AWS_REGION}') do set SG_ID=%%i
-                    call aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
-                    call aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
-                    call aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol icmp --port -1 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
+                    call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
+                    call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
+                    call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol icmp --port -1 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
                 )
                 
                 set KEY_NAME=${params.SECRET_NAME.replace('-secret','')}
-                for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t3.micro --security-group-ids %SG_ID% --key-name %KEY_NAME% --no-associate-public-ip-address --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION}') do set INST_ID=%%i
-                call aws ec2 wait instance-running --instance-ids %INST_ID% --region ${params.AWS_REGION}
-                for /f "tokens=*" %%i in ('call aws ec2 describe-instances --instance-ids %INST_ID% --query "Reservations[0].Instances[0].PrivateIpAddress" --output text --region ${params.AWS_REGION}') do set PRIVATE_IP=%%i
+                for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t3.micro --security-group-ids !SG_ID! --key-name !KEY_NAME! --no-associate-public-ip-address --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION}') do set INST_ID=%%i
                 
-                echo TARGET_INSTANCE_ID=%INST_ID% > env.props
-                echo PRIVATE_IP=%PRIVATE_IP% >> env.props
+                if "!INST_ID!"=="" (
+                    echo ERROR: Failed to launch instance. Check AWS CLI output.
+                    exit /b 1
+                )
+                
+                call aws ec2 wait instance-running --instance-ids !INST_ID! --region ${params.AWS_REGION}
+                for /f "tokens=*" %%i in ('call aws ec2 describe-instances --instance-ids !INST_ID! --query "Reservations[0].Instances[0].PrivateIpAddress" --output text --region ${params.AWS_REGION}') do set PRIVATE_IP=%%i
+                
+                if "!PRIVATE_IP!"=="" (
+                    echo ERROR: Failed to retrieve Private IP.
+                    exit /b 1
+                )
+                
+                echo TARGET_INSTANCE_ID=!INST_ID! > env.props
+                echo PRIVATE_IP=!PRIVATE_IP! >> env.props
                 
                 :: Retrieve SSH key from AWS Secrets Manager
                 echo Retrieving SSH key from Secrets Manager...
@@ -397,8 +410,8 @@ EOF
                 ping 127.0.0.1 -n 61 > nul
                 
                 echo Uploading and executing MongoDB setup script via Bastion...
-                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" setup_mongo.sh ubuntu@%PRIVATE_IP%:/tmp/setup_mongo.sh
-                ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" ubuntu@%PRIVATE_IP% "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" setup_mongo.sh ubuntu@!PRIVATE_IP!:/tmp/setup_mongo.sh
+                ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" ubuntu@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
                 
                 :: Cleanup local key
                 if exist private_key.pem del private_key.pem
