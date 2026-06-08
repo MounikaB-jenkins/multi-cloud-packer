@@ -285,6 +285,13 @@ def buildImage() {
             def packerCmd = isUnix() ? "packer" : "${PACKER_EXE}"
             if (isUnix()) {
                 sh """
+                if ! command -v packer &> /dev/null; then
+                    echo "Packer not found. Downloading dynamically..."
+                    curl -fsSL https://releases.hashicorp.com/packer/1.10.2/packer_1.10.2_linux_amd64.zip -o packer.zip
+                    unzip -q -o packer.zip
+                    chmod +x packer
+                fi
+                export PATH="\$PWD:\$PATH"
                 ${packerCmd} init .
                 ${packerCmd} validate -
                 ${packerCmd} build \\
