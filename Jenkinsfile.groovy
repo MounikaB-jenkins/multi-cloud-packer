@@ -51,6 +51,10 @@ pipeline {
         stage('Execute Action') {
             steps {
                 script {
+                    if (isUnix()) {
+                        env.GCLOUD_EXE = "gcloud"
+                        env.AZ_EXE = "az"
+                    } else {
                     // Find gcloud executable
                     env.GCLOUD_EXE = bat(returnStdout: true, script: """@echo off
                     setlocal enabledelayedexpansion
@@ -81,6 +85,7 @@ pipeline {
                     if "!AZ_EXE_FOUND!" neq "" echo !AZ_EXE_FOUND!
                     exit /b 0
                     """).trim()
+                    }
 
                     withCredentials([
                         usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
@@ -130,8 +135,8 @@ pipeline {
         }
         always {
             script {
-                if (fileExists('private_key.pem')) { bat "del private_key.pem" }
-                if (fileExists('private_key.pem.pub')) { bat "del private_key.pem.pub" }
+                if (fileExists('private_key.pem')) { isUnix() ? sh("rm -f private_key.pem") : bat("del private_key.pem") }
+                if (fileExists('private_key.pem.pub')) { isUnix() ? sh("rm -f private_key.pem.pub") : bat("del private_key.pem.pub") }
             }
             archiveArtifacts artifacts: 'manifest.json', allowEmptyArchive: true
         }
@@ -141,20 +146,27 @@ pipeline {
 def buildImage() {
     def keyName = "prod-key-${BUILD_NUMBER}"
     env.KEY_NAME = keyName
-    def privateKeyFile = "${WORKSPACE}\\private_key.pem"
+    def privateKeyFile = isUnix() ? "${WORKSPACE}/private_key.pem" : "${WORKSPACE}\\private_key.pem"
     def osType = params.IMAGE_TYPE.toLowerCase()
     def packerSource = ""
 
     // 1. Generate and Store SSH Key
     stage("Setup and Store Key for ${params.CLOUD}") {
-        bat "ssh-keygen -t rsa -b 2048 -f private_key.pem -N \"\""
+        if (isUnix()) { sh "ssh-keygen -t rsa -b 2048 -f private_key.pem -N \"\"" } else { bat "ssh-keygen -t rsa -b 2048 -f private_key.pem -N \"\"" }
         switch(params.CLOUD) {
             case 'AWS':
                 packerSource = "amazon-ebs.aws_${osType}"
-                bat """
-                call aws ec2 import-key-pair --key-name ${keyName} --public-key-material fileb://private_key.pem.pub --region ${params.AWS_REGION}
-                call aws secretsmanager create-secret --name ${keyName}-secret --secret-string file://private_key.pem --region ${params.AWS_REGION}
-                """
+                if (isUnix()) {
+                    sh """
+                    aws ec2 import-key-pair --key-name ${keyName} --public-key-material fileb://private_key.pem.pub --region ${params.AWS_REGION}
+                    aws secretsmanager create-secret --name ${keyName}-secret --secret-string file://private_key.pem --region ${params.AWS_REGION}
+                    """
+                } else {
+                    bat """
+                    call aws ec2 import-key-pair --key-name ${keyName} --public-key-material fileb://private_key.pem.pub --region ${params.AWS_REGION}
+                    call aws secretsmanager create-secret --name ${keyName}-secret --secret-string file://private_key.pem --region ${params.AWS_REGION}
+                    """
+                }
                 break
             case 'GCP':
                 packerSource = "googlecompute.gcp_${osType}"
@@ -233,31 +245,56 @@ def buildImage() {
             if (params.AZURE_GALLERY_NAME) env.PKR_VAR_azure_gallery_name = params.AZURE_GALLERY_NAME
             if (params.AZURE_GALLERY_REGIONS) env.PKR_VAR_azure_gallery_regions = "[\"${params.AZURE_GALLERY_REGIONS.split(',').collect{it.trim()}.join('\",\"')}\"]"
 
-            bat """
-            ${PACKER_EXE} init .
-            ${PACKER_EXE} validate -
-            ${PACKER_EXE} build ^
-                -only=${packerSource} ^
-                -var-file="dev.pkrvars.hcl" ^
-                -var "image_name=${params.IMAGE_NAME}" ^
-                -var "image_type=${params.IMAGE_TYPE}" ^
-                -var "region=${params.AWS_REGION}" ^
-                -var "aws_key_name=${keyName}" ^
-                -var "aws_private_key_file=${privateKeyFile}" ^
-                -var "gcp_project=${params.GCP_PROJECT}" ^
-                -var "gcp_zone=${params.GCP_ZONE}" ^
-                -var "azure_resource_group=${params.AZURE_RESOURCE_GROUP}" ^
-                -var "azure_location=${params.AZURE_LOCATION}" ^
-                -var "azure_subscription_id=${params.AZURE_SUBSCRIPTION_ID}" ^
-                -var "azure_tenant_id=${params.AZURE_TENANT_ID}" ^
-                -var "azure_client_id=%ARM_CLIENT_ID%" ^
-                -var "azure_client_secret=%ARM_CLIENT_SECRET%" ^
-                ${PACKER_TEMPLATE}
-            """
+            def packerCmd = isUnix() ? "packer" : "${PACKER_EXE}"
+            if (isUnix()) {
+                sh """
+                ${packerCmd} init .
+                ${packerCmd} validate -
+                ${packerCmd} build \\
+                    -only=${packerSource} \\
+                    -var-file="dev.pkrvars.hcl" \\
+                    -var "image_name=${params.IMAGE_NAME}" \\
+                    -var "image_type=${params.IMAGE_TYPE}" \\
+                    -var "region=${params.AWS_REGION}" \\
+                    -var "aws_key_name=${keyName}" \\
+                    -var "aws_private_key_file=${privateKeyFile}" \\
+                    -var "gcp_project=${params.GCP_PROJECT}" \\
+                    -var "gcp_zone=${params.GCP_ZONE}" \\
+                    -var "azure_resource_group=${params.AZURE_RESOURCE_GROUP}" \\
+                    -var "azure_location=${params.AZURE_LOCATION}" \\
+                    -var "azure_subscription_id=${params.AZURE_SUBSCRIPTION_ID}" \\
+                    -var "azure_tenant_id=${params.AZURE_TENANT_ID}" \\
+                    -var "azure_client_id=\$ARM_CLIENT_ID" \\
+                    -var "azure_client_secret=\$ARM_CLIENT_SECRET" \\
+                    ${PACKER_TEMPLATE}
+                """
+            } else {
+                bat """
+                ${PACKER_EXE} init .
+                ${PACKER_EXE} validate -
+                ${PACKER_EXE} build ^
+                    -only=${packerSource} ^
+                    -var-file="dev.pkrvars.hcl" ^
+                    -var "image_name=${params.IMAGE_NAME}" ^
+                    -var "image_type=${params.IMAGE_TYPE}" ^
+                    -var "region=${params.AWS_REGION}" ^
+                    -var "aws_key_name=${keyName}" ^
+                    -var "aws_private_key_file=${privateKeyFile}" ^
+                    -var "gcp_project=${params.GCP_PROJECT}" ^
+                    -var "gcp_zone=${params.GCP_ZONE}" ^
+                    -var "azure_resource_group=${params.AZURE_RESOURCE_GROUP}" ^
+                    -var "azure_location=${params.AZURE_LOCATION}" ^
+                    -var "azure_subscription_id=${params.AZURE_SUBSCRIPTION_ID}" ^
+                    -var "azure_tenant_id=${params.AZURE_TENANT_ID}" ^
+                    -var "azure_client_id=%ARM_CLIENT_ID%" ^
+                    -var "azure_client_secret=%ARM_CLIENT_SECRET%" ^
+                    ${PACKER_TEMPLATE}
+                """
+            }
         } finally {
             // This ensures the key is deleted even if the build fails
-            if (fileExists('private_key.pem')) { bat "del private_key.pem" }
-            if (fileExists('private_key.pem.pub')) { bat "del private_key.pem.pub" }
+            if (fileExists('private_key.pem')) { isUnix() ? sh("rm -f private_key.pem") : bat("del private_key.pem") }
+            if (fileExists('private_key.pem.pub')) { isUnix() ? sh("rm -f private_key.pem.pub") : bat("del private_key.pem.pub") }
         }
     }
 
@@ -313,15 +350,23 @@ def deployInstance() {
             }
 
                 // Retrieve MongoDB Credentials from AWS Secrets Manager
-                bat """@echo off
-                set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
-                set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
-                aws secretsmanager get-secret-value --secret-id mongodb-creds --query SecretString --output text --region ${params.AWS_REGION} > mongo_creds.json
-                """
+                if (isUnix()) {
+                    sh """
+                    export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                    export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                    aws secretsmanager get-secret-value --secret-id mongodb-creds --query SecretString --output text --region ${params.AWS_REGION} > mongo_creds.json
+                    """
+                } else {
+                    bat """@echo off
+                    set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
+                    set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
+                    aws secretsmanager get-secret-value --secret-id mongodb-creds --query SecretString --output text --region ${params.AWS_REGION} > mongo_creds.json
+                    """
+                }
                 def mongoCreds = readJSON file: 'mongo_creds.json'
                 def mongoUser = mongoCreds.username
                 def mongoPass = mongoCreds.password
-                bat "del mongo_creds.json"
+                if (isUnix()) { sh "rm -f mongo_creds.json" } else { bat "del mongo_creds.json" }
 
             writeFile file: 'setup_mongo.sh', text: """#!/bin/bash
 sudo apt-get update
@@ -367,6 +412,45 @@ EOF
         }
         switch(params.CLOUD) {
             case 'AWS':
+                if (isUnix()) {
+                    sh """
+                    #!/bin/bash
+                    export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                    export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                    
+                    SG_ID=\$(aws ec2 describe-security-groups --group-names production-web-sg --query "SecurityGroups[0].GroupId" --output text --region ${params.AWS_REGION} 2>/dev/null)
+                    if [ -z "\$SG_ID" ] || [ "\$SG_ID" == "None" ]; then
+                        SG_ID=\$(aws ec2 create-security-group --group-name production-web-sg --description "Production Web SG" --query "GroupId" --output text --region ${params.AWS_REGION})
+                    fi
+                    aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>/dev/null || true
+                    aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>/dev/null || true
+                    aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol icmp --port -1 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>/dev/null || true
+
+                    KEY_NAME="${params.SECRET_NAME.replace('-secret','')}"
+                    INST_ID=\$(aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t3.micro --security-group-ids "\$SG_ID" --key-name "\$KEY_NAME" --no-associate-public-ip-address --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION})
+                    if [ -z "\$INST_ID" ]; then echo "ERROR: Failed to launch instance."; exit 1; fi
+                    
+                    aws ec2 wait instance-running --instance-ids "\$INST_ID" --region ${params.AWS_REGION}
+                    PRIVATE_IP=\$(aws ec2 describe-instances --instance-ids "\$INST_ID" --query "Reservations[0].Instances[0].PrivateIpAddress" --output text --region ${params.AWS_REGION})
+                    if [ -z "\$PRIVATE_IP" ]; then echo "ERROR: Failed to retrieve Private IP."; exit 1; fi
+                    
+                    echo "TARGET_INSTANCE_ID=\$INST_ID" > env.props
+                    echo "PRIVATE_IP=\$PRIVATE_IP" >> env.props
+                    
+                    echo "Retrieving SSH key from Secrets Manager..."
+                    aws secretsmanager get-secret-value --secret-id ${params.SECRET_NAME} --query SecretString --output text --region ${params.AWS_REGION} > private_key.pem
+                    chmod 400 private_key.pem
+                    
+                    echo "Waiting 60 seconds for SSH service to become available..."
+                    sleep 60
+                    
+                    echo "Uploading and executing MongoDB setup script via Bastion..."
+                    scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ubuntu@${params.BASTION_IP}" setup_mongo.sh ubuntu@\$PRIVATE_IP:/tmp/setup_mongo.sh
+                    ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ubuntu@${params.BASTION_IP}" ubuntu@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                    
+                    rm -f private_key.pem
+                    """
+                } else {
                 bat """
                 @echo off
                 setlocal enabledelayedexpansion
@@ -416,6 +500,7 @@ EOF
                 :: Cleanup local key
                 if exist private_key.pem del private_key.pem
                 """
+                }
                 break
             case 'GCP':
                 bat """
@@ -516,7 +601,11 @@ def stopInstance() {
         }
         switch(params.CLOUD) {
             case 'AWS':
-                bat "call aws ec2 stop-instances --instance-ids ${params.INSTANCE_ID} --region ${params.AWS_REGION}"
+                if (isUnix()) {
+                    sh "aws ec2 stop-instances --instance-ids ${params.INSTANCE_ID} --region ${params.AWS_REGION}"
+                } else {
+                    bat "call aws ec2 stop-instances --instance-ids ${params.INSTANCE_ID} --region ${params.AWS_REGION}"
+                }
                 break
             case 'GCP':
                 bat """

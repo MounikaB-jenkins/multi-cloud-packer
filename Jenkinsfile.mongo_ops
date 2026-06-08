@@ -50,16 +50,24 @@ pipeline {
                     
                     // Retrieve MongoDB Credentials from AWS Secrets Manager
                     withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
-                        bat """@echo off
-                        set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
-                        set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
-                        aws secretsmanager get-secret-value --secret-id mongodb-creds --query SecretString --output text --region ${params.AWS_REGION} > mongo_creds.json
-                        """
+                        if (isUnix()) {
+                            sh """
+                            export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                            export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                            aws secretsmanager get-secret-value --secret-id mongodb-creds --query SecretString --output text --region ${params.AWS_REGION} > mongo_creds.json
+                            """
+                        } else {
+                            bat """@echo off
+                            set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
+                            set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
+                            aws secretsmanager get-secret-value --secret-id mongodb-creds --query SecretString --output text --region ${params.AWS_REGION} > mongo_creds.json
+                            """
+                        }
                     }
                     def mongoCreds = readJSON file: 'mongo_creds.json'
                     def mongoUser = mongoCreds.username
                     def mongoPass = mongoCreds.password
-                    bat "del mongo_creds.json"
+                    if (isUnix()) { sh "rm -f mongo_creds.json" } else { bat "del mongo_creds.json" }
 
                     def jsScript = ""
                     switch(params.MONGO_ACTION) {
@@ -214,13 +222,22 @@ EOF
                 ]) {
                     script {
                         if (params.CLOUD == 'AWS') {
-                            bat """
-                            @echo off
-                            set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
-                            set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
-                            echo Retrieving SSH key from AWS Secrets Manager...
-                            call aws secretsmanager get-secret-value --secret-id ${params.SECRET_NAME} --query SecretString --output text --region ${params.AWS_REGION} > private_key.pem
-                            """
+                            if (isUnix()) {
+                                sh """
+                                export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                                export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                                echo "Retrieving SSH key from AWS Secrets Manager..."
+                                aws secretsmanager get-secret-value --secret-id ${params.SECRET_NAME} --query SecretString --output text --region ${params.AWS_REGION} > private_key.pem
+                                """
+                            } else {
+                                bat """
+                                @echo off
+                                set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
+                                set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
+                                echo Retrieving SSH key from AWS Secrets Manager...
+                                call aws secretsmanager get-secret-value --secret-id ${params.SECRET_NAME} --query SecretString --output text --region ${params.AWS_REGION} > private_key.pem
+                                """
+                            }
                         } else if (params.CLOUD == 'GCP') {
                             bat """
                             @echo off
@@ -241,24 +258,40 @@ EOF
                         }
 
                         // Execute the SSH commands
-                        bat """
-                        @echo off
-                        :: Fix SSH key permissions for Windows Jenkins Agent
-                        icacls private_key.pem /inheritance:r /Q
-                        for /f "tokens=*" %%a in ('whoami') do icacls private_key.pem /grant:r "%%a:(R)" /Q
-                        
-                        echo --------------------------------------------------
-                        echo Uploading operation script to instance via Bastion...
-                        scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" mongo_script.sh ubuntu@${params.PRIVATE_IP}:/tmp/mongo_script.sh
-                        
-                        echo Executing MongoDB operation: ${params.MONGO_ACTION}
-                        ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" ubuntu@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
-                        echo --------------------------------------------------
-                        
-                        :: Cleanup
-                        del private_key.pem
-                        del mongo_script.sh
-                        """
+                        if (isUnix()) {
+                            sh """
+                            chmod 400 private_key.pem
+                            
+                            echo "--------------------------------------------------"
+                            echo "Uploading operation script to instance via Bastion..."
+                            scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ubuntu@${params.BASTION_IP}" mongo_script.sh ubuntu@${params.PRIVATE_IP}:/tmp/mongo_script.sh
+                            
+                            echo "Executing MongoDB operation: ${params.MONGO_ACTION}"
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ubuntu@${params.BASTION_IP}" ubuntu@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                            echo "--------------------------------------------------"
+                            
+                            rm -f private_key.pem mongo_script.sh
+                            """
+                        } else {
+                            bat """
+                            @echo off
+                            :: Fix SSH key permissions for Windows Jenkins Agent
+                            icacls private_key.pem /inheritance:r /Q
+                            for /f "tokens=*" %%a in ('whoami') do icacls private_key.pem /grant:r "%%a:(R)" /Q
+                            
+                            echo --------------------------------------------------
+                            echo Uploading operation script to instance via Bastion...
+                            scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" mongo_script.sh ubuntu@${params.PRIVATE_IP}:/tmp/mongo_script.sh
+                            
+                            echo Executing MongoDB operation: ${params.MONGO_ACTION}
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" ubuntu@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                            echo --------------------------------------------------
+                            
+                            :: Cleanup
+                            del private_key.pem
+                            del mongo_script.sh
+                            """
+                        }
                     }
                 }
             }
@@ -268,8 +301,8 @@ EOF
     post {
         always {
             script {
-                if (fileExists('private_key.pem')) { bat "del private_key.pem" }
-                if (fileExists('mongo_script.sh')) { bat "del mongo_script.sh" }
+                if (fileExists('private_key.pem')) { isUnix() ? sh("rm -f private_key.pem") : bat("del private_key.pem") }
+                if (fileExists('mongo_script.sh')) { isUnix() ? sh("rm -f mongo_script.sh") : bat("del mongo_script.sh") }
             }
         }
     }
