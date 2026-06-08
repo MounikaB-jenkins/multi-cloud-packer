@@ -170,19 +170,55 @@ def buildImage() {
                 break
             case 'GCP':
                 packerSource = "googlecompute.gcp_${osType}"
-                bat """
-                @echo off
-                set GCLOUD_EXE=${env.GCLOUD_EXE}
-                echo Authenticating gcloud with service account...
-                call "%GCLOUD_EXE%" auth activate-service-account --key-file="%GOOGLE_APPLICATION_CREDENTIALS%" --quiet
-                echo Enabling Secret Manager API...
-                call "%GCLOUD_EXE%" services enable secretmanager.googleapis.com --project=${params.GCP_PROJECT} --quiet
-                call "%GCLOUD_EXE%" secrets create ${keyName}-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} --quiet 2>nul
-                call "%GCLOUD_EXE%" secrets versions add ${keyName}-secret --data-file=private_key.pem --project=${params.GCP_PROJECT} --quiet
-                """
+                if (isUnix()) {
+                    sh """
+                    echo "Authenticating gcloud with service account..."
+                    ${env.GCLOUD_EXE} auth activate-service-account --key-file="\${GOOGLE_APPLICATION_CREDENTIALS}" --quiet
+                    echo "Enabling Secret Manager API..."
+                    ${env.GCLOUD_EXE} services enable secretmanager.googleapis.com --project=${params.GCP_PROJECT} --quiet
+                    ${env.GCLOUD_EXE} secrets create ${keyName}-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} --quiet 2>/dev/null || true
+                    ${env.GCLOUD_EXE} secrets versions add ${keyName}-secret --data-file=private_key.pem --project=${params.GCP_PROJECT} --quiet
+                    """
+                } else {
+                    bat """
+                    @echo off
+                    set GCLOUD_EXE=${env.GCLOUD_EXE}
+                    echo Authenticating gcloud with service account...
+                    call "%GCLOUD_EXE%" auth activate-service-account --key-file="%GOOGLE_APPLICATION_CREDENTIALS%" --quiet
+                    echo Enabling Secret Manager API...
+                    call "%GCLOUD_EXE%" services enable secretmanager.googleapis.com --project=${params.GCP_PROJECT} --quiet
+                    call "%GCLOUD_EXE%" secrets create ${keyName}-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} --quiet 2>nul
+                    call "%GCLOUD_EXE%" secrets versions add ${keyName}-secret --data-file=private_key.pem --project=${params.GCP_PROJECT} --quiet
+                    """
+                }
                 break
             case 'AZURE':
                 packerSource = "azure-arm.azure_${osType}"
+                if (isUnix()) {
+                    sh """
+                    ${env.AZ_EXE} login --service-principal -u \${ARM_CLIENT_ID} -p \${ARM_CLIENT_SECRET} --tenant ${params.AZURE_TENANT_ID} >/dev/null 2>&1
+                    ${env.AZ_EXE} account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                    
+                    if ! ${env.AZ_EXE} group show --name ${params.AZURE_RESOURCE_GROUP} >/dev/null 2>&1; then
+                        echo "Creating Resource Group: ${params.AZURE_RESOURCE_GROUP}"
+                        ${env.AZ_EXE} group create --name ${params.AZURE_RESOURCE_GROUP} --location "${params.AZURE_LOCATION}"
+                    fi
+
+                    if ! ${env.AZ_EXE} keyvault show --name ${params.AZURE_VAULT_NAME} >/dev/null 2>&1; then
+                        echo "Creating Key Vault: ${params.AZURE_VAULT_NAME}"
+                        ${env.AZ_EXE} keyvault create --name ${params.AZURE_VAULT_NAME} --resource-group ${params.AZURE_RESOURCE_GROUP} --location "${params.AZURE_LOCATION}" --enable-rbac-authorization true
+                        sleep 30
+                    fi
+
+                    if ! ${env.AZ_EXE} keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name "test-permission" --value "test" >/dev/null 2>&1; then
+                        echo "[INFO] Service Principal lacks permission. Attempting to grant 'Key Vault Secrets Officer' role..."
+                        ${env.AZ_EXE} role assignment create --role "Key Vault Secrets Officer" --assignee \${ARM_CLIENT_ID} --scope "/subscriptions/${params.AZURE_SUBSCRIPTION_ID}/resourceGroups/${params.AZURE_RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${params.AZURE_VAULT_NAME}" || { echo "Role assignment failed."; exit 1; }
+                        sleep 60
+                    fi
+                    
+                    ${env.AZ_EXE} keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name ${keyName}-secret --file private_key.pem
+                    """
+                } else {
                 bat """
                 @echo off
                 setlocal enabledelayedexpansion
@@ -230,6 +266,7 @@ def buildImage() {
                 
                 call "!AZ_EXE!" keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name ${keyName}-secret --file private_key.pem
                 """
+                }
                 break
         }
     }
@@ -503,6 +540,27 @@ EOF
                 }
                 break
             case 'GCP':
+                if (isUnix()) {
+                    sh """
+                    #!/bin/bash
+                    INSTANCE_NAME="prod-vm-${BUILD_NUMBER}"
+                    ${env.GCLOUD_EXE} compute firewall-rules create allow-ssh-http-icmp --allow tcp:22,tcp:80,icmp --target-tags=prod-web --project=${params.GCP_PROJECT} 2>/dev/null || true
+                    
+                    ${env.GCLOUD_EXE} compute instances create \${INSTANCE_NAME} \\
+                        --image=${params.IMAGE_ID} \\
+                        --project=${params.GCP_PROJECT} \\
+                        --zone=${params.GCP_ZONE} \\
+                        --machine-type=e2-micro \\
+                        --tags=prod-web \\
+                        --no-address \\
+                        --format="get(networkInterfaces[0].networkIP)" > private_ip.txt || { echo "GCP Instance launch failed."; exit 1; }
+                    
+                    PRIVATE_IP=\$(cat private_ip.txt)
+                    
+                    echo "TARGET_INSTANCE_ID=\${INSTANCE_NAME}" > env.props
+                    echo "PRIVATE_IP=\${PRIVATE_IP}" >> env.props
+                    """
+                } else {
                 bat """
                 @echo off
                 setlocal enabledelayedexpansion
@@ -528,8 +586,39 @@ EOF
                 echo TARGET_INSTANCE_ID=%INSTANCE_NAME% > env.props
                 echo PRIVATE_IP=!PRIVATE_IP! >> env.props
                 """
+                }
                 break
             case 'AZURE':
+                if (isUnix()) {
+                    sh """
+                    #!/bin/bash
+                    VM_NAME="prod-vm-${BUILD_NUMBER}"
+                    
+                    ${env.AZ_EXE} login --service-principal -u \${ARM_CLIENT_ID} -p \${ARM_CLIENT_SECRET} --tenant ${params.AZURE_TENANT_ID} >/dev/null 2>&1
+                    ${env.AZ_EXE} account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                    
+                    echo "Retrieving SSH key from Key Vault..."
+                    ${env.AZ_EXE} keyvault secret show --vault-name ${params.AZURE_VAULT_NAME} --name ${params.SECRET_NAME} --query value -o tsv > private_key.pem || { echo "ERROR: Failed to retrieve secret."; exit 1; }
+                    
+                    chmod 400 private_key.pem
+                    ssh-keygen -y -f private_key.pem > public_key.pub
+                    
+                    echo "Launching Azure VM..."
+                    ${env.AZ_EXE} vm create \\
+                        --resource-group ${params.AZURE_RESOURCE_GROUP} \\
+                        --name \${VM_NAME} \\
+                        --size Standard_B2ats_v2 \\
+                        --image "${params.IMAGE_ID}" \\
+                        --admin-username azureuser \\
+                        --public-ip-address "" \\
+                        --nsg-rule SSH \\
+                        --ssh-key-values public_key.pub \\
+                        --query "{ip:privateIps, id:id}" --output json > vm_info.json || { echo "Azure VM launch failed."; exit 1; }
+                    
+                    rm -f private_key.pem public_key.pub
+                    ${env.AZ_EXE} vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name \${VM_NAME} --port 80
+                    """
+                } else {
                 bat """
                 @echo off
                 setlocal enabledelayedexpansion
@@ -583,6 +672,7 @@ EOF
 
                 call "!AZ_EXE!" vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name %VM_NAME% --port 80
                 """
+                }
                 def vmInfo = readJSON file: 'vm_info.json'
                 env.TARGET_INSTANCE_ID = vmInfo.id
                 env.PRIVATE_IP = vmInfo.ip
@@ -608,14 +698,25 @@ def stopInstance() {
                 }
                 break
             case 'GCP':
-                bat """
-                @echo off
-                setlocal enabledelayedexpansion
-                set GCLOUD_EXE=${env.GCLOUD_EXE}
-                call "!GCLOUD_EXE!" compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}
-                """
+                if (isUnix()) {
+                    sh "${env.GCLOUD_EXE} compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}"
+                } else {
+                    bat """
+                    @echo off
+                    setlocal enabledelayedexpansion
+                    set GCLOUD_EXE=${env.GCLOUD_EXE}
+                    call "!GCLOUD_EXE!" compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}
+                    """
+                }
                 break
             case 'AZURE':
+                 if (isUnix()) {
+                     sh """
+                     ${env.AZ_EXE} login --service-principal -u \${ARM_CLIENT_ID} -p \${ARM_CLIENT_SECRET} --tenant ${params.AZURE_TENANT_ID} >/dev/null 2>&1
+                     ${env.AZ_EXE} account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                     ${env.AZ_EXE} vm deallocate --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}
+                     """
+                 } else {
                  bat """
                     @echo off
                     setlocal enabledelayedexpansion
@@ -627,6 +728,7 @@ def stopInstance() {
                     call "!AZ_EXE!" account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
                     call "!AZ_EXE!" vm deallocate --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}
                  """
+                 }
                 break
         }
         echo "Stop command issued for instance ${params.INSTANCE_ID} in ${params.CLOUD}."

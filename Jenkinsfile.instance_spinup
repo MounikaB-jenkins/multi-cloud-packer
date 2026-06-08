@@ -272,6 +272,28 @@ done
             break
             
         case 'GCP':
+            if (isUnix()) {
+                sh """
+                #!/bin/bash
+                INSTANCE_NAME="prod-vm-${BUILD_NUMBER}"
+                ${env.GCLOUD_EXE} compute firewall-rules create allow-ssh-http-icmp --allow tcp:22,tcp:80,icmp --target-tags=prod-web --project=${params.GCP_PROJECT} 2>/dev/null || true
+                
+                ${env.GCLOUD_EXE} compute instances create \${INSTANCE_NAME} \\
+                    --image=${params.IMAGE_ID} \\
+                    --project=${params.GCP_PROJECT} \\
+                    --zone=${params.GCP_ZONE} \\
+                    --machine-type=e2-micro \\
+                    --tags=prod-web \\
+                    --no-address \\
+                    --format="get(networkInterfaces[0].networkIP)" > private_ip.txt || { echo "GCP Instance launch failed."; exit 1; }
+                
+                PRIVATE_IP=\$(cat private_ip.txt)
+                if [ -z "\$PRIVATE_IP" ]; then echo "GCP Instance launch failed."; exit 1; fi
+                
+                echo "TARGET_INSTANCE_ID=\${INSTANCE_NAME}" > env.props
+                echo "PRIVATE_IP=\${PRIVATE_IP}" >> env.props
+                """
+            } else {
             bat """
             @echo off
             setlocal enabledelayedexpansion
@@ -306,9 +328,40 @@ done
             echo TARGET_INSTANCE_ID=%INSTANCE_NAME% > env.props
             echo PRIVATE_IP=!PRIVATE_IP! >> env.props
             """
+            }
             break
             
         case 'AZURE':
+            if (isUnix()) {
+                sh """
+                #!/bin/bash
+                VM_NAME="prod-vm-${BUILD_NUMBER}"
+                
+                ${env.AZ_EXE} login --service-principal -u \${ARM_CLIENT_ID} -p \${ARM_CLIENT_SECRET} --tenant ${params.AZURE_TENANT_ID} >/dev/null 2>&1
+                ${env.AZ_EXE} account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                
+                echo "Retrieving SSH key from Key Vault..."
+                ${env.AZ_EXE} keyvault secret show --vault-name ${params.AZURE_VAULT_NAME} --name ${params.SECRET_NAME} --query value -o tsv > private_key.pem || { echo "ERROR: Failed to retrieve secret."; exit 1; }
+                
+                chmod 400 private_key.pem
+                ssh-keygen -y -f private_key.pem > public_key.pub
+                
+                echo "Launching Azure VM..."
+                ${env.AZ_EXE} vm create \\
+                    --resource-group ${params.AZURE_RESOURCE_GROUP} \\
+                    --name \${VM_NAME} \\
+                    --size Standard_B2ats_v2 \\
+                    --image "${params.IMAGE_ID}" \\
+                    --admin-username azureuser \\
+                    --public-ip-address "" \\
+                    --nsg-rule SSH \\
+                    --ssh-key-values public_key.pub \\
+                    --query "{ip:privateIps, id:id}" --output json > vm_info.json || { echo "Azure VM launch failed."; exit 1; }
+                
+                rm -f private_key.pem public_key.pub
+                ${env.AZ_EXE} vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name \${VM_NAME} --port 80
+                """
+            } else {
             bat """
             @echo off
             setlocal enabledelayedexpansion

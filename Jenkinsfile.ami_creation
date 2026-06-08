@@ -3,7 +3,7 @@ def PACKER = 'C:\\DevopsProject\\packer.exe'
 properties([
     parameters([
         choice(name: 'CLOUD_PROVIDER', choices: ['ALL', 'AWS', 'GCP', 'AZURE'], description: 'Select cloud provider(s) to build images for'),
-        string(name: 'BRANCH_NAME', defaultValue: 'development', description: 'Git branch to checkout and build (e.g., development, main, feature/xyz)'),
+        string(name: 'BRANCH_NAME', defaultValue: 'develop', description: 'Git branch to checkout and build (e.g., development, main, feature/xyz)'),
         string(name: 'IMAGE_NAME', defaultValue: 'multi-cloud-ubuntu', description: 'Name for the Packer image'),
         string(name: 'EMAIL', defaultValue: 'mounika.b5693@outlook.com', description: 'Email for notification'),
         
@@ -61,6 +61,13 @@ pipeline {
 
         stage('Init & Validate') {
             steps {
+                script {
+                if (isUnix()) {
+                    sh """
+                    packer init .
+                    packer validate -var-file="dev.pkrvars.hcl" ${PACKER_TEMPLATE}
+                    """
+                } else {
                 bat """
                 @echo off
                 if exist "C:\\DevopsProject\\packer.exe" (
@@ -73,6 +80,8 @@ pipeline {
                 packer.exe validate -var-file="dev.pkrvars.hcl" %PACKER_TEMPLATE%
                 """
             }
+                }
+            }
         }
 
         stage('Setup and Store Keys') {
@@ -84,6 +93,46 @@ pipeline {
                         file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
                         usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
                     ]) {
+                        if (isUnix()) {
+                            sh """
+                            #!/bin/bash
+                            ssh-keygen -t rsa -b 2048 -f private_key.pem -N ""
+                            
+                            if [ "${params.CLOUD_PROVIDER}" = "ALL" ] || [ "${params.CLOUD_PROVIDER}" = "AWS" ]; then
+                                aws ec2 import-key-pair --key-name ${env.KEY_NAME} --public-key-material fileb://private_key.pem.pub --region ${params.AWS_REGION}
+                                aws secretsmanager create-secret --name ${env.KEY_NAME}-secret --secret-string file://private_key.pem --region ${params.AWS_REGION}
+                            fi
+                            
+                            if [ "${params.CLOUD_PROVIDER}" = "ALL" ] || [ "${params.CLOUD_PROVIDER}" = "GCP" ]; then
+                                gcloud auth activate-service-account --key-file="\${GOOGLE_APPLICATION_CREDENTIALS}" --quiet
+                                gcloud services enable secretmanager.googleapis.com --project=${params.GCP_PROJECT} --quiet
+                                gcloud secrets create ${env.KEY_NAME}-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} --quiet 2>/dev/null || true
+                                gcloud secrets versions add ${env.KEY_NAME}-secret --data-file=private_key.pem --project=${params.GCP_PROJECT} --quiet
+                            fi
+                            
+                            if [ "${params.CLOUD_PROVIDER}" = "ALL" ] || [ "${params.CLOUD_PROVIDER}" = "AZURE" ]; then
+                                az login --service-principal -u \${ARM_CLIENT_ID} -p \${ARM_CLIENT_SECRET} --tenant ${params.AZURE_TENANT_ID} >/dev/null 2>&1
+                                az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                                
+                                if ! az group show --name ${params.AZURE_RESOURCE_GROUP} >/dev/null 2>&1; then
+                                    az group create --name ${params.AZURE_RESOURCE_GROUP} --location "${params.AZURE_LOCATION}"
+                                fi
+                                
+                                if ! az keyvault show --name ${params.AZURE_VAULT_NAME} >/dev/null 2>&1; then
+                                    az keyvault create --name ${params.AZURE_VAULT_NAME} --resource-group ${params.AZURE_RESOURCE_GROUP} --location "${params.AZURE_LOCATION}" --enable-rbac-authorization true
+                                    sleep 30
+                                fi
+                                
+                                if ! az keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name "test-permission" --value "test" >/dev/null 2>&1; then
+                                    az role assignment create --role "Key Vault Secrets Officer" --assignee \${ARM_CLIENT_ID} --scope "/subscriptions/${params.AZURE_SUBSCRIPTION_ID}/resourceGroups/${params.AZURE_RESOURCE_GROUP}/providers/Microsoft.KeyVault/vaults/${params.AZURE_VAULT_NAME}" || { echo "Role assignment failed"; exit 1; }
+                                    sleep 60
+                                fi
+                                
+                                az keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name ${env.KEY_NAME}-secret --file private_key.pem
+                            fi
+                            """
+                            env.AWS_PRIVATE_KEY_FILE = "${WORKSPACE}/private_key.pem"
+                        } else {
                         bat """
                         @echo off
                         setlocal enabledelayedexpansion
@@ -202,6 +251,7 @@ pipeline {
                         )
                         """
                         env.AWS_PRIVATE_KEY_FILE = "${WORKSPACE}\\private_key.pem"
+                        }
                     }
                 }
             }
@@ -233,6 +283,25 @@ pipeline {
                         file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
                         usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
                     ]) {
+                        if (isUnix()) {
+                            sh """
+                            packer build \\
+                                -var "image_name=${params.IMAGE_NAME}" \\
+                                -var "region=${params.AWS_REGION}" \\
+                                -var "aws_key_name=${env.KEY_NAME}" \\
+                                -var "aws_private_key_file=${env.AWS_PRIVATE_KEY_FILE}" \\
+                                -var "gcp_project=${params.GCP_PROJECT}" \\
+                                -var "gcp_zone=${params.GCP_ZONE}" \\
+                                -var "azure_resource_group=${params.AZURE_RESOURCE_GROUP}" \\
+                                -var "azure_subscription_id=${params.AZURE_SUBSCRIPTION_ID}" \\
+                                -var "azure_tenant_id=${params.AZURE_TENANT_ID}" \\
+                                -var "azure_client_id=\${ARM_CLIENT_ID}" \\
+                                -var "azure_client_secret=\${ARM_CLIENT_SECRET}" \\
+                                -var-file="dev.pkrvars.hcl" \\
+                                ${onlyFlag} \\
+                                ${PACKER_TEMPLATE}
+                            """
+                        } else {
                         bat """
                         @echo off
                         set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
@@ -257,6 +326,7 @@ pipeline {
                             ${onlyFlag} ^
                             %PACKER_TEMPLATE%
                         """
+                        }
                     }
                 }
             }
@@ -289,6 +359,15 @@ pipeline {
                         usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
                     ]) {
                         if (env.GCP_IMAGE && params.GCP_SHARE_MEMBERS) {
+                            if (isUnix()) {
+                                sh """
+                                gcloud auth activate-service-account --key-file="\${GOOGLE_APPLICATION_CREDENTIALS}" --quiet
+                                for M in \$(echo "${params.GCP_SHARE_MEMBERS}" | tr ',' ' '); do
+                                    echo "Granting GCP image access to \$M..."
+                                    gcloud compute images add-iam-policy-binding ${env.GCP_IMAGE} --project=${params.GCP_PROJECT} --member="\$M" --role="roles/compute.imageUser" --quiet
+                                done
+                                """
+                            } else {
                             bat """
                             @echo off
                             set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
@@ -298,8 +377,19 @@ pipeline {
                                 call gcloud compute images add-iam-policy-binding ${env.GCP_IMAGE} --project=${params.GCP_PROJECT} --member="%%M" --role="roles/compute.imageUser" --quiet
                             )
                             """
+                            }
                         }
                         if (env.AZURE_IMAGE && params.AZURE_SHARE_OIDS) {
+                            if (isUnix()) {
+                                sh """
+                                az login --service-principal -u \${ARM_CLIENT_ID} -p \${ARM_CLIENT_SECRET} --tenant ${params.AZURE_TENANT_ID} >/dev/null 2>&1
+                                az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                                for O in \$(echo "${params.AZURE_SHARE_OIDS}" | tr ',' ' '); do
+                                    echo "Granting Azure Reader access to Object ID \$O..."
+                                    az role assignment create --role "Reader" --assignee "\$O" --scope "${env.AZURE_IMAGE}"
+                                done
+                                """
+                            } else {
                             bat """
                             @echo off
                             call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID} >nul 2>&1
@@ -309,6 +399,7 @@ pipeline {
                                 call az role assignment create --role "Reader" --assignee %%O --scope "${env.AZURE_IMAGE}"
                             )
                             """
+                            }
                         }
                     }
                 }
@@ -334,8 +425,8 @@ pipeline {
         }
         always {
             script {
-                if (fileExists('private_key.pem')) bat "del private_key.pem"
-                if (fileExists('private_key.pem.pub')) bat "del private_key.pem.pub"
+                if (fileExists('private_key.pem')) { isUnix() ? sh("rm -f private_key.pem") : bat("del private_key.pem") }
+                if (fileExists('private_key.pem.pub')) { isUnix() ? sh("rm -f private_key.pem.pub") : bat("del private_key.pem.pub") }
             }
             archiveArtifacts artifacts: 'manifest.json', allowEmptyArchive: true
         }
