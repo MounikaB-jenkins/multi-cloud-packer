@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     parameters {
-        choice(name: 'ACTION', choices: ['SETUP_INFRA', 'BUILD', 'DEPLOY', 'STOP'], description: 'The action to perform: SETUP_INFRA to create networking, BUILD a new image, DEPLOY an instance from an image, or STOP a running instance.')
+        choice(name: 'ACTION', choices: ['BUILD', 'DEPLOY', 'STOP'], description: 'The action to perform: BUILD a new image, DEPLOY an instance from an image, or STOP a running instance.')
         choice(name: 'CLOUD', choices: ['AWS', 'GCP', 'AZURE'], description: 'The target cloud provider.')
         
         // Build Parameters
@@ -58,10 +58,9 @@ pipeline {
                         file(credentialsId: 'gcp-key', variable: 'GOOGLE_APPLICATION_CREDENTIALS'),
                         usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')
                     ]) {
+                        ensureAwsNetwork()
+
                         switch(params.ACTION) {
-                            case 'SETUP_INFRA':
-                                setupInfra()
-                                break
                             case 'BUILD':
                                 buildImage()
                                 break
@@ -86,13 +85,15 @@ pipeline {
                 if (params.ACTION == 'BUILD') {
                     body += "New Image ID: ${env.NEW_IMAGE_ID}\n"
                     body += "Secret Name: ${env.KEY_NAME}-secret\n"
+                    if (params.CLOUD == 'AWS' && params.AWS_VPC_ID == '') {
+                        body += "Auto-Provisioned VPC ID: ${env.ACTIVE_AWS_VPC_ID}\n"
+                        body += "Auto-Provisioned Subnet ID: ${env.ACTIVE_AWS_SUBNET_ID}\n"
+                    }
                 } else if (params.ACTION == 'DEPLOY') {
                     body += "Instance ID: ${env.TARGET_INSTANCE_ID}\n"
                     body += "Public IP: ${env.PUBLIC_IP}\n"
-                } else if (params.ACTION == 'STOP') {
+                } else {
                     body += "Instance ID: ${params.INSTANCE_ID}\n"
-                } else if (params.ACTION == 'SETUP_INFRA') {
-                    body += "Infrastructure setup completed. Check console logs for VPC and Subnet IDs to use in future jobs.\n"
                 }
                 emailext(subject: subject, body: body, to: "${params.EMAIL}")
             }
@@ -110,118 +111,6 @@ pipeline {
                 if (fileExists('private_key.pem.pub')) { bat "del private_key.pem.pub" }
             }
             archiveArtifacts artifacts: 'manifest.json', allowEmptyArchive: true
-        }
-    }
-}
-
-def setupInfra() {
-    stage("Setup Infrastructure for ${params.CLOUD}") {
-        if (params.CLOUD == 'AWS') {
-            def cfnTemplate = """\
-AWSTemplateFormatVersion: '2010-09-09'
-Description: 'VPC with Public and Private Subnets, IGW, and NAT Gateway'
-Resources:
-  MyVPC:
-    Type: AWS::EC2::VPC
-    Properties:
-      CidrBlock: 10.0.0.0/16
-      EnableDnsSupport: true
-      EnableDnsHostnames: true
-      Tags:
-        - Key: Name
-          Value: multi-cloud-vpc
-  PublicSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref MyVPC
-      CidrBlock: 10.0.1.0/24
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: multi-cloud-public-subnet
-  PrivateSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref MyVPC
-      CidrBlock: 10.0.2.0/24
-      Tags:
-        - Key: Name
-          Value: multi-cloud-private-subnet
-  InternetGateway:
-    Type: AWS::EC2::InternetGateway
-    Properties:
-      Tags:
-        - Key: Name
-          Value: multi-cloud-igw
-  VPCGatewayAttachment:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref MyVPC
-      InternetGatewayId: !Ref InternetGateway
-  NatGatewayEIP:
-    Type: AWS::EC2::EIP
-    Properties:
-      Domain: vpc
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGatewayEIP.AllocationId
-      SubnetId: !Ref PublicSubnet
-      Tags:
-        - Key: Name
-          Value: multi-cloud-nat
-  PublicRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref MyVPC
-  PublicRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
-  PublicSubnetRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PublicSubnet
-      RouteTableId: !Ref PublicRouteTable
-  PrivateRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref MyVPC
-  PrivateRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
-  PrivateSubnetRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref PrivateSubnet
-      RouteTableId: !Ref PrivateRouteTable
-Outputs:
-  VpcId:
-    Value: !Ref MyVPC
-  PublicSubnetId:
-    Value: !Ref PublicSubnet
-  PrivateSubnetId:
-    Value: !Ref PrivateSubnet
-"""
-            writeFile file: 'aws-infra.yml', text: cfnTemplate
-            
-            bat """
-            @echo off
-            echo Deploying AWS Infrastructure via CloudFormation...
-            call aws cloudformation deploy --template-file aws-infra.yml --stack-name multi-cloud-infra --region ${params.AWS_REGION}
-            
-            echo ======================================================
-            echo AWS Infrastructure Outputs:
-            call aws cloudformation describe-stacks --stack-name multi-cloud-infra --query "Stacks[0].Outputs" --output table --region ${params.AWS_REGION}
-            echo ======================================================
-            """
-        } else {
-            echo "Infrastructure setup is automated for AWS in this pipeline. Please provision GCP/AZURE infrastructure natively."
         }
     }
 }
@@ -276,8 +165,8 @@ def buildImage() {
                 -var "image_name=${params.IMAGE_NAME}" ^
                 -var "image_type=${params.IMAGE_TYPE}" ^
                 -var "region=${params.AWS_REGION}" ^
-                -var "aws_vpc_id=${params.AWS_VPC_ID}" ^
-                -var "aws_subnet_id=${params.AWS_SUBNET_ID}" ^
+                -var "aws_vpc_id=${env.ACTIVE_AWS_VPC_ID}" ^
+                -var "aws_subnet_id=${env.ACTIVE_AWS_SUBNET_ID}" ^
                 -var "aws_key_name=${keyName}" ^
                 -var "aws_private_key_file=${privateKeyFile}" ^
                 -var "gcp_project=${params.GCP_PROJECT}" ^
@@ -332,9 +221,9 @@ def deployInstance() {
                 
                 set "VPC_FILTER="
                 set "VPC_ARG="
-                if not "${params.AWS_VPC_ID}"=="" (
-                    set "VPC_FILTER=Name=vpc-id,Values=${params.AWS_VPC_ID}"
-                    set "VPC_ARG=--vpc-id ${params.AWS_VPC_ID}"
+                if not "${env.ACTIVE_AWS_VPC_ID}"=="" (
+                    set "VPC_FILTER=Name=vpc-id,Values=${env.ACTIVE_AWS_VPC_ID}"
+                    set "VPC_ARG=--vpc-id ${env.ACTIVE_AWS_VPC_ID}"
                 )
                 
                 for /f "tokens=*" %%i in ('call aws ec2 describe-security-groups --filters "Name=group-name,Values=production-web-sg" !VPC_FILTER! --query "SecurityGroups[0].GroupId" --output text --region ${params.AWS_REGION} 2^>nul') do set SG_ID=%%i
@@ -347,7 +236,7 @@ def deployInstance() {
                 set KEY_NAME=${params.SECRET_NAME.replace('-secret','')}
                 
                 set "SUBNET_ARG="
-                if not "${params.AWS_SUBNET_ID}"=="" set "SUBNET_ARG=--subnet-id ${params.AWS_SUBNET_ID}"
+                if not "${env.ACTIVE_AWS_SUBNET_ID}"=="" set "SUBNET_ARG=--subnet-id ${env.ACTIVE_AWS_SUBNET_ID}"
                 
                 for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t2.micro --security-group-ids !SG_ID! --key-name !KEY_NAME! !SUBNET_ARG! --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION}') do set INST_ID=%%i
                 call aws ec2 wait instance-running --instance-ids !INST_ID! --region ${params.AWS_REGION}
@@ -429,5 +318,90 @@ def stopInstance() {
                 break
         }
         echo "Stop command issued for instance ${params.INSTANCE_ID} in ${params.CLOUD}."
+    }
+}
+
+def ensureAwsNetwork() {
+    env.ACTIVE_AWS_VPC_ID = params.AWS_VPC_ID
+    env.ACTIVE_AWS_SUBNET_ID = params.AWS_SUBNET_ID
+    
+    if (params.CLOUD == 'AWS' && (params.ACTION == 'BUILD' || params.ACTION == 'DEPLOY')) {
+        if (params.AWS_VPC_ID == '' || params.AWS_SUBNET_ID == '') {
+            stage('Auto-Provision AWS Network') {
+                echo "AWS_VPC_ID or AWS_SUBNET_ID is missing. Automatically creating a lightweight VPC and Subnet..."
+                def cfnTemplate = """\
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Auto-generated VPC and Subnet for Packer Build/Deploy'
+Resources:
+  AutoVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.10.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: auto-packer-vpc
+  AutoSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref AutoVPC
+      CidrBlock: 10.10.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: auto-packer-subnet
+  AutoIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: auto-packer-igw
+  AutoIGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref AutoVPC
+      InternetGatewayId: !Ref AutoIGW
+  AutoRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref AutoVPC
+  AutoRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref AutoRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref AutoIGW
+  AutoSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref AutoSubnet
+      RouteTableId: !Ref AutoRouteTable
+Outputs:
+  VpcId:
+    Value: !Ref AutoVPC
+  SubnetId:
+    Value: !Ref AutoSubnet
+"""
+                writeFile file: 'auto-aws-infra.yml', text: cfnTemplate
+                
+                bat """
+                @echo off
+                echo Deploying auto-packer-network stack...
+                call aws cloudformation deploy --template-file auto-aws-infra.yml --stack-name auto-packer-network --region ${params.AWS_REGION}
+                
+                call aws cloudformation describe-stacks --stack-name auto-packer-network --query "Stacks[0].Outputs[?OutputKey=='VpcId'].OutputValue" --output text --region ${params.AWS_REGION} > auto_vpc.txt
+                call aws cloudformation describe-stacks --stack-name auto-packer-network --query "Stacks[0].Outputs[?OutputKey=='SubnetId'].OutputValue" --output text --region ${params.AWS_REGION} > auto_subnet.txt
+                """
+                
+                env.ACTIVE_AWS_VPC_ID = readFile('auto_vpc.txt').trim()
+                env.ACTIVE_AWS_SUBNET_ID = readFile('auto_subnet.txt').trim()
+                
+                echo "======================================================"
+                echo "Auto-Provisioned VPC: ${env.ACTIVE_AWS_VPC_ID}"
+                echo "Auto-Provisioned Subnet: ${env.ACTIVE_AWS_SUBNET_ID}"
+                echo "======================================================"
+            }
+        }
     }
 }
