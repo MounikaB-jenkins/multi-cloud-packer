@@ -161,7 +161,7 @@
         <hudson.plugins.git.extensions.impl.CleanBeforeCheckout/>
       </extensions>
     </scm>
-    <scriptPath>Jenkinsfile</scriptPath>
+    <scriptPath>Jenkinsfile.groovy</scriptPath>
     <lightweight>false</lightweight>
   </definition>
   <triggers/>

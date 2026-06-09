@@ -322,11 +322,14 @@ def stopInstance() {
 }
 
 def ensureAwsNetwork() {
-    env.ACTIVE_AWS_VPC_ID = params.AWS_VPC_ID
-    env.ACTIVE_AWS_SUBNET_ID = params.AWS_SUBNET_ID
+    def vpcId = params.AWS_VPC_ID != null ? params.AWS_VPC_ID.trim() : ''
+    def subnetId = params.AWS_SUBNET_ID != null ? params.AWS_SUBNET_ID.trim() : ''
+    
+    env.ACTIVE_AWS_VPC_ID = vpcId
+    env.ACTIVE_AWS_SUBNET_ID = subnetId
     
     if (params.CLOUD == 'AWS' && (params.ACTION == 'BUILD' || params.ACTION == 'DEPLOY')) {
-        if (params.AWS_VPC_ID == '' || params.AWS_SUBNET_ID == '') {
+        if (vpcId == '' || subnetId == '') {
             stage('Auto-Provision AWS Network') {
                 echo "AWS_VPC_ID or AWS_SUBNET_ID is missing."
                 echo "Checking for AWS Default VPC (Packer requires a Default VPC if no custom VPC is parameterized in the HCL)..."
@@ -343,18 +346,30 @@ def ensureAwsNetwork() {
                 
                 if "!DEF_VPC!"=="" (
                     echo No Default VPC found. Restoring the AWS Default VPC in ${params.AWS_REGION}...
-                    for /f "tokens=*" %%i in ('call aws ec2 create-default-vpc --query "Vpc.VpcId" --output text --region ${params.AWS_REGION}') do set DEF_VPC=%%i
+                    for /f "tokens=*" %%i in ('call aws ec2 create-default-vpc --query "Vpc.VpcId" --output text --region ${params.AWS_REGION} 2^>nul') do set DEF_VPC=%%i
                     timeout /t 5 /nobreak > nul
                 ) else (
                     echo Found existing Default VPC: !DEF_VPC!
                 )
                 
-                echo !DEF_VPC! > auto_vpc.txt
+                if "!DEF_VPC!"=="None" set DEF_VPC=
+                if "!DEF_VPC!"=="null" set DEF_VPC=
+                
+                if "!DEF_VPC!"=="" (
+                    echo [ERROR] Failed to find or restore the Default VPC.
+                    echo Please manually create a VPC and provide AWS_VPC_ID and AWS_SUBNET_ID.
+                    exit /b 1
+                )
+                
+                echo !DEF_VPC!> auto_vpc.txt
                 
                 set "DEF_SUBNET="
-                for /f "tokens=*" %%i in ('call aws ec2 describe-subnets --filters "Name=vpc-id,Values=!DEF_VPC!" "Name=defaultForAz,Values=true" --query "Subnets[0].SubnetId" --output text --region ${params.AWS_REGION} 2^>nul') do set DEF_SUBNET=%%i
+                for /f "tokens=*" %%i in ('call aws ec2 describe-subnets --filters "Name=vpc-id,Values=!DEF_VPC!" --query "Subnets[0].SubnetId" --output text --region ${params.AWS_REGION} 2^>nul') do set DEF_SUBNET=%%i
                 
-                echo !DEF_SUBNET! > auto_subnet.txt
+                if "!DEF_SUBNET!"=="None" set DEF_SUBNET=
+                if "!DEF_SUBNET!"=="null" set DEF_SUBNET=
+                
+                echo !DEF_SUBNET!> auto_subnet.txt
                 """
                 
                 env.ACTIVE_AWS_VPC_ID = readFile('auto_vpc.txt').trim()
