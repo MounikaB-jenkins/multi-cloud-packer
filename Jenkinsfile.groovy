@@ -328,78 +328,41 @@ def ensureAwsNetwork() {
     if (params.CLOUD == 'AWS' && (params.ACTION == 'BUILD' || params.ACTION == 'DEPLOY')) {
         if (params.AWS_VPC_ID == '' || params.AWS_SUBNET_ID == '') {
             stage('Auto-Provision AWS Network') {
-                echo "AWS_VPC_ID or AWS_SUBNET_ID is missing. Automatically creating a lightweight VPC and Subnet..."
-                def cfnTemplate = """\
-AWSTemplateFormatVersion: '2010-09-09'
-Description: 'Auto-generated VPC and Subnet for Packer Build/Deploy'
-Resources:
-  AutoVPC:
-    Type: AWS::EC2::VPC
-    Properties:
-      CidrBlock: 10.10.0.0/16
-      EnableDnsSupport: true
-      EnableDnsHostnames: true
-      Tags:
-        - Key: Name
-          Value: auto-packer-vpc
-  AutoSubnet:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref AutoVPC
-      CidrBlock: 10.10.1.0/24
-      MapPublicIpOnLaunch: true
-      Tags:
-        - Key: Name
-          Value: auto-packer-subnet
-  AutoIGW:
-    Type: AWS::EC2::InternetGateway
-    Properties:
-      Tags:
-        - Key: Name
-          Value: auto-packer-igw
-  AutoIGWAttachment:
-    Type: AWS::EC2::VPCGatewayAttachment
-    Properties:
-      VpcId: !Ref AutoVPC
-      InternetGatewayId: !Ref AutoIGW
-  AutoRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref AutoVPC
-  AutoRoute:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref AutoRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref AutoIGW
-  AutoSubnetRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref AutoSubnet
-      RouteTableId: !Ref AutoRouteTable
-Outputs:
-  VpcId:
-    Value: !Ref AutoVPC
-  SubnetId:
-    Value: !Ref AutoSubnet
-"""
-                writeFile file: 'auto-aws-infra.yml', text: cfnTemplate
+                echo "AWS_VPC_ID or AWS_SUBNET_ID is missing."
+                echo "Checking for AWS Default VPC (Packer requires a Default VPC if no custom VPC is parameterized in the HCL)..."
                 
                 bat """
                 @echo off
-                echo Deploying auto-packer-network stack...
-                call aws cloudformation deploy --template-file auto-aws-infra.yml --stack-name auto-packer-network --region ${params.AWS_REGION}
+                setlocal enabledelayedexpansion
                 
-                call aws cloudformation describe-stacks --stack-name auto-packer-network --query "Stacks[0].Outputs[?OutputKey=='VpcId'].OutputValue" --output text --region ${params.AWS_REGION} > auto_vpc.txt
-                call aws cloudformation describe-stacks --stack-name auto-packer-network --query "Stacks[0].Outputs[?OutputKey=='SubnetId'].OutputValue" --output text --region ${params.AWS_REGION} > auto_subnet.txt
+                set "DEF_VPC="
+                for /f "tokens=*" %%i in ('call aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text --region ${params.AWS_REGION} 2^>nul') do set DEF_VPC=%%i
+                
+                if "!DEF_VPC!"=="None" set DEF_VPC=
+                if "!DEF_VPC!"=="null" set DEF_VPC=
+                
+                if "!DEF_VPC!"=="" (
+                    echo No Default VPC found. Restoring the AWS Default VPC in ${params.AWS_REGION}...
+                    for /f "tokens=*" %%i in ('call aws ec2 create-default-vpc --query "Vpc.VpcId" --output text --region ${params.AWS_REGION}') do set DEF_VPC=%%i
+                    timeout /t 5 /nobreak > nul
+                ) else (
+                    echo Found existing Default VPC: !DEF_VPC!
+                )
+                
+                echo !DEF_VPC! > auto_vpc.txt
+                
+                set "DEF_SUBNET="
+                for /f "tokens=*" %%i in ('call aws ec2 describe-subnets --filters "Name=vpc-id,Values=!DEF_VPC!" "Name=defaultForAz,Values=true" --query "Subnets[0].SubnetId" --output text --region ${params.AWS_REGION} 2^>nul') do set DEF_SUBNET=%%i
+                
+                echo !DEF_SUBNET! > auto_subnet.txt
                 """
                 
                 env.ACTIVE_AWS_VPC_ID = readFile('auto_vpc.txt').trim()
                 env.ACTIVE_AWS_SUBNET_ID = readFile('auto_subnet.txt').trim()
                 
                 echo "======================================================"
-                echo "Auto-Provisioned VPC: ${env.ACTIVE_AWS_VPC_ID}"
-                echo "Auto-Provisioned Subnet: ${env.ACTIVE_AWS_SUBNET_ID}"
+                echo "Active VPC ID: ${env.ACTIVE_AWS_VPC_ID}"
+                echo "Active Subnet ID: ${env.ACTIVE_AWS_SUBNET_ID}"
                 echo "======================================================"
             }
         }
