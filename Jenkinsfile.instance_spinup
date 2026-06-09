@@ -119,12 +119,34 @@ def deployInstance() {
         if (isUnix()) { sh "rm -f mongo_creds.json" } else { bat "del mongo_creds.json" }
 
         writeFile file: 'setup_mongo.sh', text: """#!/bin/bash
-sudo apt-get update
-sudo apt-get install -y gnupg curl
-curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor --yes
-echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
-sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mongodb-org
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS=\$ID
+else
+    OS=\$(uname -s)
+fi
+
+if [[ "\$OS" == "ubuntu"* ]] || [[ "\$OS" == "debian"* ]]; then
+    sudo apt-get update
+    sudo apt-get install -y gnupg curl
+    curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor --yes
+    echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+    sudo apt-get update
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mongodb-org
+elif [[ "\$OS" == "amzn"* ]] || [[ "\$OS" == "centos"* ]] || [[ "\$OS" == "rhel"* ]]; then
+    cat <<EOF | sudo tee /etc/yum.repos.d/mongodb-org-7.0.repo
+[mongodb-org-7.0]
+name=MongoDB Repository
+baseurl=https://repo.mongodb.org/yum/amazon/2023/mongodb-org/7.0/x86_64/
+gpgcheck=1
+enabled=1
+gpgkey=https://www.mongodb.org/static/pgp/server-7.0.asc
+EOF
+    sudo yum install -y mongodb-org
+else
+    echo "Unsupported OS: \$OS"
+    exit 1
+fi
 
 sudo systemctl start mongod
 sudo systemctl enable mongod
@@ -156,9 +178,9 @@ done
 """
 
         writeFile file: 'bastion_userdata.sh', text: '''#!/bin/bash
+dnf install -y iptables
 sysctl -w net.ipv4.ip_forward=1
-DEFAULT_IFACE=$(ip route show default | awk '/default/ {print $5}')
-iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
+iptables -t nat -A POSTROUTING -j MASQUERADE
 '''
     }
     switch(params.CLOUD) {
@@ -259,10 +281,18 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
                 if [ -n "\$PRIVATE_SUBNET_ID" ] && [ -n "\$BASTION_ID" ] && [ "\$BASTION_ID" != "None" ]; then
                     echo "Configuring route table for private subnet: \$PRIVATE_SUBNET_ID to use Bastion as NAT"
                     EXPLICIT_RTB=\$(aws ec2 describe-route-tables --filters "Name=association.subnet-id,Values=\$PRIVATE_SUBNET_ID" --query "RouteTables[0].RouteTableId" --output text 2>/dev/null || echo "")
-                    if [ -z "\$EXPLICIT_RTB" ] || [ "\$EXPLICIT_RTB" == "None" ] || [ "\$EXPLICIT_RTB" == "null" ]; then
+                    PUBLIC_RTB=\$(aws ec2 describe-route-tables --filters "Name=association.subnet-id,Values=\$PUBLIC_SUBNET_ID" --query "RouteTables[0].RouteTableId" --output text 2>/dev/null || echo "")
+                    
+                    if [ "\$EXPLICIT_RTB" == "\$PUBLIC_RTB" ] || [ -z "\$EXPLICIT_RTB" ] || [ "\$EXPLICIT_RTB" == "None" ] || [ "\$EXPLICIT_RTB" == "null" ]; then
                         echo "Creating new custom Route Table for private subnet..."
                         EXPLICIT_RTB=\$(aws ec2 create-route-table --vpc-id "\$VPC_ID" --query "RouteTable.RouteTableId" --output text)
-                        aws ec2 associate-route-table --subnet-id "\$PRIVATE_SUBNET_ID" --route-table-id "\$EXPLICIT_RTB"
+                        
+                        ASSOC_ID=\$(aws ec2 describe-route-tables --filters "Name=association.subnet-id,Values=\$PRIVATE_SUBNET_ID" --query "RouteTables[0].Associations[?SubnetId=='\$PRIVATE_SUBNET_ID'].RouteTableAssociationId" --output text 2>/dev/null)
+                        if [ -n "\$ASSOC_ID" ] && [ "\$ASSOC_ID" != "None" ]; then
+                            aws ec2 replace-route-table-association --association-id "\$ASSOC_ID" --route-table-id "\$EXPLICIT_RTB"
+                        else
+                            aws ec2 associate-route-table --subnet-id "\$PRIVATE_SUBNET_ID" --route-table-id "\$EXPLICIT_RTB"
+                        fi
                     fi
                     
                     echo "Routing 0.0.0.0/0 to Bastion \$BASTION_ID in Route Table \$EXPLICIT_RTB..."
@@ -305,12 +335,14 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
                 
                 if [ -n "\$ACTIVE_BASTION_IP" ]; then
                     echo "Uploading and executing MongoDB setup script via Bastion (\$ACTIVE_BASTION_IP)..."
-                    scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" setup_mongo.sh ubuntu@\$PRIVATE_IP:/tmp/setup_mongo.sh
-                    ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" ubuntu@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                    scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" setup_mongo.sh ubuntu@\$PRIVATE_IP:/tmp/setup_mongo.sh || \
+                    scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" setup_mongo.sh ec2-user@\$PRIVATE_IP:/tmp/setup_mongo.sh
+                    ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" ubuntu@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh" || \
+                    ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" ec2-user@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
                 else
                     echo "Uploading and executing MongoDB setup script directly..."
-                    scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ubuntu@\$PRIVATE_IP:/tmp/setup_mongo.sh
-                    ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                    scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ubuntu@\$PRIVATE_IP:/tmp/setup_mongo.sh || scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ec2-user@\$PRIVATE_IP:/tmp/setup_mongo.sh
+                    ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh" || ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
                 fi
                 
                 rm -f private_key.pem
@@ -423,13 +455,27 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
                 set "EXPLICIT_RTB="
                 for /f "tokens=*" %%r in ('call aws ec2 describe-route-tables --filters "Name=association.subnet-id,Values=!PRIVATE_SUBNET_ID!" --query "RouteTables[0].RouteTableId" --output text 2^>nul') do set "EXPLICIT_RTB=%%r"
                 
-                if "!EXPLICIT_RTB!"=="" set "EXPLICIT_RTB=None"
-                if "!EXPLICIT_RTB!"=="null" set "EXPLICIT_RTB=None"
+                set "PUBLIC_RTB="
+                for /f "tokens=*" %%r in ('call aws ec2 describe-route-tables --filters "Name=association.subnet-id,Values=!PUBLIC_SUBNET_ID!" --query "RouteTables[0].RouteTableId" --output text 2^>nul') do set "PUBLIC_RTB=%%r"
                 
-                if "!EXPLICIT_RTB!"=="None" (
+                set "CREATE_RTB=false"
+                if "!EXPLICIT_RTB!"=="" set "CREATE_RTB=true"
+                if "!EXPLICIT_RTB!"=="None" set "CREATE_RTB=true"
+                if "!EXPLICIT_RTB!"=="null" set "CREATE_RTB=true"
+                if "!EXPLICIT_RTB!"=="!PUBLIC_RTB!" set "CREATE_RTB=true"
+                
+                if "!CREATE_RTB!"=="true" (
                     echo Creating new custom Route Table for private subnet...
                     for /f "tokens=*" %%r in ('call aws ec2 create-route-table --vpc-id "!VPC_ID!" --query "RouteTable.RouteTableId" --output text') do set "EXPLICIT_RTB=%%r"
-                    call aws ec2 associate-route-table --subnet-id "!PRIVATE_SUBNET_ID!" --route-table-id "!EXPLICIT_RTB!"
+                    
+                    set "ASSOC_ID="
+                    for /f "tokens=*" %%a in ('call aws ec2 describe-route-tables --filters "Name=association.subnet-id,Values=!PRIVATE_SUBNET_ID!" --query "RouteTables[0].Associations[?SubnetId=='!PRIVATE_SUBNET_ID!'].RouteTableAssociationId" --output text 2^>nul') do set "ASSOC_ID=%%a"
+                    
+                    if not "!ASSOC_ID!"=="" if not "!ASSOC_ID!"=="None" (
+                        call aws ec2 replace-route-table-association --association-id "!ASSOC_ID!" --route-table-id "!EXPLICIT_RTB!"
+                    ) else (
+                        call aws ec2 associate-route-table --subnet-id "!PRIVATE_SUBNET_ID!" --route-table-id "!EXPLICIT_RTB!"
+                    )
                 )
                 
                 echo Routing 0.0.0.0/0 to Bastion !BASTION_ID! in Route Table !EXPLICIT_RTB!...
@@ -476,12 +522,12 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
             
             if not "!ACTIVE_BASTION_IP!"=="" (
                 echo Uploading and executing MongoDB setup script via Bastion (!ACTIVE_BASTION_IP!)...
-                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" setup_mongo.sh ubuntu@!PRIVATE_IP!:/tmp/setup_mongo.sh
-                ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" ubuntu@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" setup_mongo.sh ubuntu@!PRIVATE_IP!:/tmp/setup_mongo.sh || scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" setup_mongo.sh ec2-user@!PRIVATE_IP!:/tmp/setup_mongo.sh
+                ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" ubuntu@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh" || ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" ec2-user@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
             ) else (
                 echo Uploading and executing MongoDB setup script directly...
-                scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ubuntu@!PRIVATE_IP!:/tmp/setup_mongo.sh
-                ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ubuntu@!PRIVATE_IP!:/tmp/setup_mongo.sh || scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ec2-user@!PRIVATE_IP!:/tmp/setup_mongo.sh
+                ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh" || ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
             )
 
             :: Cleanup local key
