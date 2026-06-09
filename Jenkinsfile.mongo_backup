@@ -71,15 +71,31 @@ pipeline {
 #!/bin/bash
 MONGO_USER="\$1"
 MONGO_PASS="\$2"
+
+if grep -q 'authorization: enabled' /etc/mongod.conf && ! grep -q 'keyFile' /etc/mongod.conf; then
+    echo 'Setting up keyFile for Replica Set authentication...'
+    openssl rand -base64 756 > /tmp/mongo-keyfile
+    sudo mv /tmp/mongo-keyfile /etc/mongo-keyfile
+    sudo chmod 400 /etc/mongo-keyfile
+    sudo chown mongod:mongod /etc/mongo-keyfile 2>/dev/null || sudo chown mongodb:mongodb /etc/mongo-keyfile 2>/dev/null
+    sudo sed -i 's|^security:|security:\\n  keyFile: /etc/mongo-keyfile|' /etc/mongod.conf
+    RESTART_NEEDED=true
+fi
+
 if ! grep -q 'replSetName' /etc/mongod.conf; then
     echo 'Configuring Replica Set in /etc/mongod.conf...'
-    echo -e '\nreplication:\n  replSetName: "rs0"' | sudo tee -a /etc/mongod.conf
+    echo -e '\\nreplication:\\n  replSetName: "rs0"' | sudo tee -a /etc/mongod.conf
+    RESTART_NEEDED=true
+fi
+
+if [ "\$RESTART_NEEDED" = "true" ]; then
     sudo systemctl restart mongod
     sleep 15
-    mongosh admin -u "\$MONGO_USER" -p "\$MONGO_PASS" --eval "rs.initiate()"
-    sleep 10
 fi
-mongosh admin -u "\$MONGO_USER" -p "\$MONGO_PASS" --eval "db.dummy.insertOne({init: 1}); db.dummy.drop();"
+
+mongosh admin -u "\$MONGO_USER" -p "\$MONGO_PASS" --eval 'rs.initiate({_id: "rs0", members: [{_id: 0, host: "127.0.0.1:27017"}]})' || true
+sleep 5
+mongosh admin -u "\$MONGO_USER" -p "\$MONGO_PASS" --eval 'db.dummy.insertOne({init: 1}); db.dummy.drop();'
 EOF
 
                         if [ -n "${params.BASTION_IP}" ]; then
