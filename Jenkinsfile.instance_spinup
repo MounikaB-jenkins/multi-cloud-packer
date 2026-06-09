@@ -183,10 +183,19 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
                 if [ -n "\$IGW_ID" ] && [ "\$IGW_ID" != "None" ]; then
                     ROUTE_TABLES=\$(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=\$VPC_ID" "Name=route.gateway-id,Values=\$IGW_ID" --query "RouteTables[*].RouteTableId" --output text)
                     for RTB in \$ROUTE_TABLES; do
-                        SUBNET_ID=\$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=\$VPC_ID" "Name=association.route-table-id,Values=\$RTB" --query "Subnets[0].SubnetId" --output text)
-                        if [ -n "\$SUBNET_ID" ] && [ "\$SUBNET_ID" != "None" ]; then
-                            PUBLIC_SUBNET_ID=\$SUBNET_ID
+                        SUBNET_ID=\$(aws ec2 describe-route-tables --route-table-ids "\$RTB" --query "RouteTables[0].Associations[*].SubnetId" --output text | tr -s '\t ' '\n' | head -n 1)
+                        if [ -n "\$SUBNET_ID" ] && [ "\$SUBNET_ID" != "None" ] && [ "\$SUBNET_ID" != "null" ]; then
+                            PUBLIC_SUBNET_ID="\$SUBNET_ID"
                             break
+                        else
+                            IS_MAIN=\$(aws ec2 describe-route-tables --route-table-ids "\$RTB" --query "RouteTables[0].Associations[?Main==true].RouteTableAssociationId" --output text | tr -s '\t ' '\n' | head -n 1)
+                            if [ -n "\$IS_MAIN" ] && [ "\$IS_MAIN" != "None" ]; then
+                                SUBNET_ID=\$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=\$VPC_ID" --query "Subnets[0].SubnetId" --output text | tr -s '\t ' '\n' | head -n 1)
+                                if [ -n "\$SUBNET_ID" ] && [ "\$SUBNET_ID" != "None" ]; then
+                                    PUBLIC_SUBNET_ID="\$SUBNET_ID"
+                                    break
+                                fi
+                            fi
                         fi
                     done
                 fi
@@ -314,10 +323,28 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
             for /f "tokens=*" %%i in ('call aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=!VPC_ID!" --query "InternetGateways[0].InternetGatewayId" --output text') do set "IGW_ID=%%i"
             if not "!IGW_ID!"=="" if not "!IGW_ID!"=="None" (
                 for /f "tokens=*" %%j in ('call aws ec2 describe-route-tables --filters "Name=vpc-id,Values=!VPC_ID!" "Name=route.gateway-id,Values=!IGW_ID!" --query "RouteTables[*].RouteTableId" --output text') do (
-                    for /f "tokens=*" %%k in ('call aws ec2 describe-subnets --filters "Name=vpc-id,Values=!VPC_ID!" "Name=association.route-table-id,Values=%%j" --query "Subnets[0].SubnetId" --output text') do (
-                        if not "%%k"=="" if not "%%k"=="None" (
-                            set "PUBLIC_SUBNET_ID=%%k"
-                            goto found_public_subnet_bat
+                    set "SUBNET_ID="
+                    for /f "tokens=1" %%k in ('call aws ec2 describe-route-tables --route-table-ids "%%j" --query "RouteTables[0].Associations[*].SubnetId" --output text') do (
+                        if "!SUBNET_ID!"=="" set "SUBNET_ID=%%k"
+                    )
+                    if "!SUBNET_ID!"=="" set "SUBNET_ID=None"
+                    if not "!SUBNET_ID!"=="None" if not "!SUBNET_ID!"=="null" (
+                        set "PUBLIC_SUBNET_ID=!SUBNET_ID!"
+                        goto found_public_subnet_bat
+                    ) else (
+                        set "IS_MAIN="
+                        for /f "tokens=1" %%m in ('call aws ec2 describe-route-tables --route-table-ids "%%j" --query "RouteTables[0].Associations[?Main==true].RouteTableAssociationId" --output text') do (
+                            if "!IS_MAIN!"=="" set "IS_MAIN=%%m"
+                        )
+                        if not "!IS_MAIN!"=="" if not "!IS_MAIN!"=="None" (
+                            set "SUBNET_ID="
+                            for /f "tokens=1" %%n in ('call aws ec2 describe-subnets --filters "Name=vpc-id,Values=!VPC_ID!" --query "Subnets[0].SubnetId" --output text') do (
+                                if "!SUBNET_ID!"=="" set "SUBNET_ID=%%n"
+                            )
+                            if not "!SUBNET_ID!"=="" if not "!SUBNET_ID!"=="None" (
+                                set "PUBLIC_SUBNET_ID=!SUBNET_ID!"
+                                goto found_public_subnet_bat
+                            )
                         )
                     )
                 )
