@@ -86,6 +86,9 @@ pipeline {
                 } else if (params.ACTION == 'DEPLOY') {
                     body += "Instance ID: ${env.TARGET_INSTANCE_ID}\n"
                     body += "Public IP: ${env.PUBLIC_IP}\n"
+                    if (env.BASTION_IP) {
+                        body += "Bastion IP: ${env.BASTION_IP}\n"
+                    }
                 } else {
                     body += "Instance ID: ${params.INSTANCE_ID}\n"
                 }
@@ -229,18 +232,42 @@ def deployInstance() {
                     SUBNET_ARG="--subnet-id ${env.ACTIVE_AWS_SUBNET_ID}"
                 fi
                 
+                BASTION_ID=\$(aws ec2 describe-instances --filters "Name=tag:Name,Values=bastion-host" "Name=instance-state-name,Values=running" \$VPC_FILTER --query "Reservations[0].Instances[0].InstanceId" --output text --region ${params.AWS_REGION} 2>/dev/null || echo "")
+                if [ -z "\$BASTION_ID" ] || [ "\$BASTION_ID" = "None" ]; then
+                    echo "Bastion host not found. Provisioning a new Bastion Host..."
+                    AL2023_AMI=\$(aws ssm get-parameters --names /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64 --query "Parameters[0].Value" --output text --region ${params.AWS_REGION})
+                    BASTION_ID=\$(aws ec2 run-instances --image-id \$AL2023_AMI --instance-type t2.micro --security-group-ids \$SG_ID --key-name \$KEY_NAME \$SUBNET_ARG --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=bastion-host}]' --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION})
+                    aws ec2 wait instance-running --instance-ids \$BASTION_ID --region ${params.AWS_REGION}
+                fi
+                BASTION_IP=\$(aws ec2 describe-instances --instance-ids \$BASTION_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text --region ${params.AWS_REGION})
+                
                 INST_ID=\$(aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t2.micro --security-group-ids \$SG_ID --key-name \$KEY_NAME \$SUBNET_ARG --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION})
                 aws ec2 wait instance-running --instance-ids \$INST_ID --region ${params.AWS_REGION}
                 PUBLIC_IP=\$(aws ec2 describe-instances --instance-ids \$INST_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text --region ${params.AWS_REGION})
                 
                 echo "TARGET_INSTANCE_ID=\$INST_ID" > env.props
                 echo "PUBLIC_IP=\$PUBLIC_IP" >> env.props
+                echo "BASTION_IP=\$BASTION_IP" >> env.props
                 """
                 break
             case 'GCP':
                 sh """
                 INSTANCE_NAME="prod-vm-${BUILD_NUMBER}"
                 gcloud compute firewall-rules create allow-ssh-http --allow tcp:22,tcp:80 --target-tags=prod-web --project=${params.GCP_PROJECT} 2>/dev/null || true
+                
+                BASTION_NAME="bastion-host"
+                BASTION_EXISTS=\$(gcloud compute instances describe \$BASTION_NAME --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE} --format="value(name)" 2>/dev/null || echo "")
+                if [ -z "\$BASTION_EXISTS" ]; then
+                    echo "Provisioning GCP Bastion Host..."
+                    gcloud compute instances create \$BASTION_NAME \\
+                        --image-family=debian-11 \\
+                        --image-project=debian-cloud \\
+                        --project=${params.GCP_PROJECT} \\
+                        --zone=${params.GCP_ZONE} \\
+                        --machine-type=e2-micro \\
+                        --tags=prod-web
+                fi
+                BASTION_IP=\$(gcloud compute instances describe \$BASTION_NAME --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE} --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
                 
                 gcloud compute instances create \$INSTANCE_NAME \\
                     --image=${params.IMAGE_ID} \\
@@ -253,6 +280,7 @@ def deployInstance() {
                 PUBLIC_IP=\$(cat nat_ip.txt)
                 echo "TARGET_INSTANCE_ID=\$INSTANCE_NAME" > env.props
                 echo "PUBLIC_IP=\$PUBLIC_IP" >> env.props
+                echo "BASTION_IP=\$BASTION_IP" >> env.props
                 """
                 break
             case 'AZURE':
@@ -260,6 +288,21 @@ def deployInstance() {
                 VM_NAME="prod-vm-${BUILD_NUMBER}"
                 az login --service-principal -u \$ARM_CLIENT_ID -p \$ARM_CLIENT_SECRET --tenant ${params.AZURE_TENANT_ID}
                 az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                
+                BASTION_NAME="bastion-host"
+                BASTION_EXISTS=\$(az vm show --resource-group ${params.AZURE_RESOURCE_GROUP} --name \$BASTION_NAME --query "name" -o tsv 2>/dev/null || echo "")
+                if [ -z "\$BASTION_EXISTS" ]; then
+                    echo "Provisioning Azure Bastion Host..."
+                    az vm create \\
+                        --resource-group ${params.AZURE_RESOURCE_GROUP} \\
+                        --name \$BASTION_NAME \\
+                        --size Standard_B1s \\
+                        --image Ubuntu2204 \\
+                        --admin-username azureuser \\
+                        --generate-ssh-keys \\
+                        --public-ip-sku Standard > /dev/null
+                fi
+                az vm show -d -g ${params.AZURE_RESOURCE_GROUP} -n \$BASTION_NAME --query publicIps -o tsv > bastion_ip.txt
                 
                 az vm create \\
                     --resource-group ${params.AZURE_RESOURCE_GROUP} \\
@@ -276,11 +319,17 @@ def deployInstance() {
                 def vmInfo = readJSON file: 'vm_info.json'
                 env.TARGET_INSTANCE_ID = vmInfo.id
                 env.PUBLIC_IP = vmInfo.ip
+                if (fileExists('bastion_ip.txt')) {
+                    env.BASTION_IP = readFile('bastion_ip.txt').trim()
+                }
                 return // Skip property reading for Azure
         }
         def props = readProperties file: 'env.props'
         env.TARGET_INSTANCE_ID = props['TARGET_INSTANCE_ID']
         env.PUBLIC_IP = props['PUBLIC_IP']
+        if (props['BASTION_IP']) {
+            env.BASTION_IP = props['BASTION_IP']
+        }
     }
 }
 
