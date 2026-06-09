@@ -94,6 +94,18 @@
           <trim>false</trim>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
+          <name>AWS_VPC_ID</name>
+          <description>AWS VPC ID for Packer build and deployment (required if no default VPC exists).</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>AWS_SUBNET_ID</name>
+          <description>AWS Subnet ID for Packer build and deployment (required if no default VPC exists).</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
           <name>AZURE_VAULT_NAME</name>
           <description>Azure Key Vault name for storing/retrieving secrets.</description>
           <defaultValue>packer-vault</defaultValue>

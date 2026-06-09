@@ -23,6 +23,8 @@ pipeline {
 
         // Cloud Configuration
         string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region for all operations.')
+        string(name: 'AWS_VPC_ID', defaultValue: '', description: 'AWS VPC ID for Packer build and deployment (required if no default VPC exists).')
+        string(name: 'AWS_SUBNET_ID', defaultValue: '', description: 'AWS Subnet ID for Packer build and deployment (required if no default VPC exists).')
         string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID')
         string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone for all operations.')
         string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group')
