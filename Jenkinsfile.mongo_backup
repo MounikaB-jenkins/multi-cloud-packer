@@ -69,17 +69,17 @@ pipeline {
                         echo "Ensuring target MongoDB is configured as a Replica Set for oplog backup..."
                         cat << 'EOF' > config_mongo.sh
 #!/bin/bash
-MONGO_USER="$1"
-MONGO_PASS="$2"
+MONGO_USER="\$1"
+MONGO_PASS="\$2"
 if ! grep -q 'replSetName' /etc/mongod.conf; then
     echo 'Configuring Replica Set in /etc/mongod.conf...'
     echo -e '\nreplication:\n  replSetName: "rs0"' | sudo tee -a /etc/mongod.conf
     sudo systemctl restart mongod
     sleep 15
-    mongosh admin -u "$MONGO_USER" -p "$MONGO_PASS" --eval "rs.initiate()"
+    mongosh admin -u "\$MONGO_USER" -p "\$MONGO_PASS" --eval "rs.initiate()"
     sleep 10
 fi
-mongosh admin -u "$MONGO_USER" -p "$MONGO_PASS" --eval "db.dummy.insertOne({init: 1}); db.dummy.drop();"
+mongosh admin -u "\$MONGO_USER" -p "\$MONGO_PASS" --eval "db.dummy.insertOne({init: 1}); db.dummy.drop();"
 EOF
 
                         if [ -n "${params.BASTION_IP}" ]; then
