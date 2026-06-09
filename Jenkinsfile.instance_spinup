@@ -226,8 +226,8 @@ done
                 
                 if [ -n "\$ACTIVE_BASTION_IP" ]; then
                     echo "Uploading and executing MongoDB setup script via Bastion (\$ACTIVE_BASTION_IP)..."
-                    scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ubuntu@\$ACTIVE_BASTION_IP" setup_mongo.sh ubuntu@\$PRIVATE_IP:/tmp/setup_mongo.sh
-                    ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ubuntu@\$ACTIVE_BASTION_IP" ubuntu@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                    scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" setup_mongo.sh ubuntu@\$PRIVATE_IP:/tmp/setup_mongo.sh
+                    ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" ubuntu@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
                 else
                     echo "Uploading and executing MongoDB setup script directly..."
                     scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ubuntu@\$PRIVATE_IP:/tmp/setup_mongo.sh
@@ -321,10 +321,16 @@ done
             echo Waiting 60 seconds for SSH service to become available...
             ping 127.0.0.1 -n 61 > nul
             
-            echo Uploading and executing MongoDB setup script via Bastion...
-            scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" setup_mongo.sh ubuntu@!PRIVATE_IP!:/tmp/setup_mongo.sh
-            ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" ubuntu@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
-            
+            if not "!ACTIVE_BASTION_IP!"=="" (
+                echo Uploading and executing MongoDB setup script via Bastion (!ACTIVE_BASTION_IP!)...
+                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" setup_mongo.sh ubuntu@!PRIVATE_IP!:/tmp/setup_mongo.sh
+                ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" ubuntu@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+            ) else (
+                echo Uploading and executing MongoDB setup script directly...
+                scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ubuntu@!PRIVATE_IP!:/tmp/setup_mongo.sh
+                ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+            )
+
             :: Cleanup local key
             if exist private_key.pem del private_key.pem
             """
