@@ -1,0 +1,70 @@
+pipeline {
+    agent any
+
+    parameters {
+        choice(name: 'ACTION', choices: ['BACKUP', 'RESTORE'], description: 'Action to perform: Backup the database or Restore from an existing backup.')
+        string(name: 'MONGO_URI', defaultValue: 'mongodb://127.0.0.1:27017', description: 'MongoDB URI. If auth is enabled, use: mongodb://user:pass@127.0.0.1:27017/?authSource=admin')
+        string(name: 'BACKUP_DIR', defaultValue: '/var/lib/jenkins/mongo_backups', description: 'Local path on the Jenkins instance to store and retrieve the backups.')
+        string(name: 'RESTORE_TIMESTAMP', defaultValue: 'latest', description: 'For RESTORE only: The specific timestamp folder to restore (or "latest").')
+        booleanParam(name: 'DROP_BEFORE_RESTORE', defaultValue: false, description: 'For RESTORE only: Drop collections from the database before restoring.')
+    }
+
+    stages {
+        stage('MongoDB Backup') {
+            when { expression { params.ACTION == 'BACKUP' } }
+            steps {
+                script {
+                    // Generate a timestamp for the backup directory
+                    def timestamp = sh(script: "date +'%Y-%m-%d_%H-%M-%S'", returnStdout: true).trim()
+                    def currentBackupPath = "${params.BACKUP_DIR}/${timestamp}"
+                    
+                    echo "Taking full MongoDB backup with oplog to ${currentBackupPath}..."
+                    sh """
+                    mkdir -p "${currentBackupPath}"
+                    
+                    # Execute mongodump with --oplog (Requires full instance dump, no specific --db)
+                    mongodump --uri="${params.MONGO_URI}" --oplog --out="${currentBackupPath}"
+                    
+                    # Update the 'latest' symlink for easy future restores
+                    ln -sfn "${currentBackupPath}" "${params.BACKUP_DIR}/latest"
+                    
+                    # Create an archive to store as a Jenkins Artifact
+                    tar -czf "mongo_backup_${timestamp}.tar.gz" -C "${params.BACKUP_DIR}" "${timestamp}"
+                    """
+                    
+                    archiveArtifacts artifacts: "mongo_backup_${timestamp}.tar.gz", allowEmptyArchive: false
+                    echo "Backup successful! Archived as mongo_backup_${timestamp}.tar.gz"
+                }
+            }
+        }
+
+        stage('MongoDB Restore') {
+            when { expression { params.ACTION == 'RESTORE' } }
+            steps {
+                script {
+                    def targetBackupPath = "${params.BACKUP_DIR}/${params.RESTORE_TIMESTAMP}"
+                    def dropFlag = params.DROP_BEFORE_RESTORE ? "--drop" : ""
+                    
+                    echo "Restoring MongoDB from ${targetBackupPath} with oplogReplay..."
+                    sh """
+                    if [ ! -d "${targetBackupPath}" ]; then
+                        echo "ERROR: Backup directory ${targetBackupPath} not found!"
+                        exit 1
+                    fi
+                    
+                    # Execute mongorestore with --oplogReplay to process oplog.bson
+                    mongorestore --uri="${params.MONGO_URI}" --oplogReplay ${dropFlag} "${targetBackupPath}"
+                    """
+                    echo "Restore successful!"
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Clean up the local tarball to save disk space on the Jenkins agent
+            sh "rm -f mongo_backup_*.tar.gz"
+        }
+    }
+}

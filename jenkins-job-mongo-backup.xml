@@ -1,0 +1,63 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job@1306.v9a9cd34d1ed2">
+  <actions/>
+  <description>MongoDB Backup and Restore Pipeline using Oplog</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.ChoiceParameterDefinition>
+          <name>ACTION</name>
+          <description>Action to perform: Backup the database or Restore from an existing backup.</description>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>BACKUP</string>
+              <string>RESTORE</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>MONGO_URI</name>
+          <description>MongoDB connection string (e.g., mongodb://user:pass@127.0.0.1:27017/?authSource=admin)</description>
+          <defaultValue>mongodb://127.0.0.1:27017</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>BACKUP_DIR</name>
+          <description>Local path on the Jenkins instance to store and retrieve backups.</description>
+          <defaultValue>/var/lib/jenkins/mongo_backups</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>RESTORE_TIMESTAMP</name>
+          <description>For RESTORE only: The specific timestamp folder to restore (or "latest").</description>
+          <defaultValue>latest</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.BooleanParameterDefinition>
+          <name>DROP_BEFORE_RESTORE</name>
+          <description>For RESTORE only: Drop existing collections before restoring data.</description>
+          <defaultValue>false</defaultValue>
+        </hudson.model.BooleanParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps@2.97">
+    <scm class="hudson.plugins.git.GitSCM" plugin="git@5.2.2">
+      <configVersion>2</configVersion>
+      <userRemoteConfigs>
+        <hudson.plugins.git.UserRemoteConfig>
+          <url>https://github.com/MounikaB-jenkins/multi-cloud-packer.git</url>
+          <credentialsId>github-token</credentialsId>
+        </hudson.plugins.git.UserRemoteConfig>
+      </userRemoteConfigs>
+      <branches>
+        <hudson.plugins.git.BranchSpec>
+          <name>*/develop</name>
+        </hudson.plugins.git.BranchSpec>
+      </branches>
+    </scm>
+    <scriptPath>Jenkinsfile.mongo_backup</scriptPath>
+    <lightweight>false</lightweight>
+  </definition>
+</flow-definition>
