@@ -82,11 +82,15 @@ pipeline {
         always {
             script {
                 def status = currentBuild.result ?: 'SUCCESS'
-                emailext(
-                    subject: "Instance ${params.ACTION} on ${params.CLOUD}: ${status}",
-                    body: "Action: ${params.ACTION}\nCloud: ${params.CLOUD}\nInstance: ${env.TARGET_INSTANCE_ID ?: params.INSTANCE_ID}\nPrivate IP: ${env.PRIVATE_IP ?: 'N/A'}\nBastion IP: ${env.BASTION_IP ?: 'N/A'}\n\nNote: If SSH fails, please wait 2-3 minutes for the instance to finish booting.",
-                    to: "${params.EMAIL}"
-                )
+                try {
+                    emailext(
+                        subject: "Instance ${params.ACTION} on ${params.CLOUD}: ${status}",
+                        body: "Action: ${params.ACTION}\nCloud: ${params.CLOUD}\nInstance: ${env.TARGET_INSTANCE_ID ?: params.INSTANCE_ID}\nPrivate IP: ${env.PRIVATE_IP ?: 'N/A'}\nBastion IP: ${env.BASTION_IP ?: 'N/A'}\n\nNote: If SSH fails, please wait 2-3 minutes for the instance to finish booting.",
+                        to: "${params.EMAIL}"
+                    )
+                } catch (Exception e) {
+                    echo "Notice: SMTP email notification failed, but the build was successful. Error: ${e.message}"
+                }
             }
         }
     }
@@ -203,6 +207,18 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
                 if [ -z "\$PUBLIC_SUBNET_ID" ]; then echo "ERROR: Could not find a public subnet in VPC \$VPC_ID." && exit 1; fi
                 echo "Found public subnet: \$PUBLIC_SUBNET_ID"
 
+                PRIVATE_SUBNET_ID="${params.AWS_SUBNET_ID}"
+                if [ -z "\$PRIVATE_SUBNET_ID" ]; then
+                    ALL_SUBNETS=\$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=\$VPC_ID" --query "Subnets[*].SubnetId" --output text)
+                    for sub in \$ALL_SUBNETS; do
+                        if [ "\$sub" != "\$PUBLIC_SUBNET_ID" ]; then
+                            PRIVATE_SUBNET_ID="\$sub"
+                            break
+                        fi
+                    done
+                fi
+                echo "Using private subnet: \$PRIVATE_SUBNET_ID"
+
                 # 2. Security Group Management
                 SG_ID=\$(aws ec2 describe-security-groups --filters "Name=group-name,Values=production-web-sg" "Name=vpc-id,Values=\$VPC_ID" --query "SecurityGroups[0].GroupId" --output text 2>/dev/null)
                 if [ -z "\$SG_ID" ] || [ "\$SG_ID" == "None" ]; then
@@ -211,6 +227,9 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
                 aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol tcp --port 22 --cidr 0.0.0.0/0 2>/dev/null || true
                 aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 2>/dev/null || true
                 aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol icmp --port -1 --cidr 0.0.0.0/0 2>/dev/null || true
+
+                VPC_CIDR=\$(aws ec2 describe-vpcs --vpc-ids "\$VPC_ID" --query "Vpcs[0].CidrBlock" --output text)
+                aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol all --cidr "\$VPC_CIDR" 2>/dev/null || true
 
                 # 3. Bastion Host (NAT Configuration)
                 KEY_NAME="${params.SECRET_NAME.replace('-secret','')}"
@@ -237,22 +256,18 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
                     aws ec2 modify-instance-attribute --instance-id "\$BASTION_ID" --no-source-dest-check
                 fi
 
-                PRIVATE_SUBNET_ID="${params.AWS_SUBNET_ID}"
                 if [ -n "\$PRIVATE_SUBNET_ID" ] && [ -n "\$BASTION_ID" ] && [ "\$BASTION_ID" != "None" ]; then
                     echo "Configuring route table for private subnet: \$PRIVATE_SUBNET_ID to use Bastion as NAT"
-                    ROUTE_TABLE_ID=\$(aws ec2 describe-route-tables --filters "Name=association.subnet-id,Values=\$PRIVATE_SUBNET_ID" --query "RouteTables[0].RouteTableId" --output text)
-                    if [ -n "\$ROUTE_TABLE_ID" ] && [ "\$ROUTE_TABLE_ID" != "None" ]; then
-                        HAS_NAT_ROUTE=\$(aws ec2 describe-route-tables --route-table-ids "\$ROUTE_TABLE_ID" --filters "Name=route.destination-cidr-block,Values=0.0.0.0/0" "Name=route.instance-id,Values=\$BASTION_ID" --query "RouteTables" --output text)
-                        if [ -z "\$HAS_NAT_ROUTE" ]; then
-                             echo "Adding route 0.0.0.0/0 -> Bastion \$BASTION_ID to route table \$ROUTE_TABLE_ID"
-                             aws ec2 replace-route --route-table-id "\$ROUTE_TABLE_ID" --destination-cidr-block 0.0.0.0/0 --instance-id "\$BASTION_ID" 2>/dev/null || \
-                             aws ec2 create-route --route-table-id "\$ROUTE_TABLE_ID" --destination-cidr-block 0.0.0.0/0 --instance-id "\$BASTION_ID"
-                        else
-                            echo "Route to Bastion NAT already exists."
-                        fi
-                    else
-                        echo "WARNING: Could not find route table for subnet \$PRIVATE_SUBNET_ID. Internet access may fail."
+                    EXPLICIT_RTB=\$(aws ec2 describe-route-tables --filters "Name=association.subnet-id,Values=\$PRIVATE_SUBNET_ID" --query "RouteTables[0].RouteTableId" --output text 2>/dev/null || echo "")
+                    if [ -z "\$EXPLICIT_RTB" ] || [ "\$EXPLICIT_RTB" == "None" ] || [ "\$EXPLICIT_RTB" == "null" ]; then
+                        echo "Creating new custom Route Table for private subnet..."
+                        EXPLICIT_RTB=\$(aws ec2 create-route-table --vpc-id "\$VPC_ID" --query "RouteTable.RouteTableId" --output text)
+                        aws ec2 associate-route-table --subnet-id "\$PRIVATE_SUBNET_ID" --route-table-id "\$EXPLICIT_RTB"
                     fi
+                    
+                    echo "Routing 0.0.0.0/0 to Bastion \$BASTION_ID in Route Table \$EXPLICIT_RTB..."
+                    aws ec2 replace-route --route-table-id "\$EXPLICIT_RTB" --destination-cidr-block 0.0.0.0/0 --instance-id "\$BASTION_ID" 2>/dev/null || \
+                    aws ec2 create-route --route-table-id "\$EXPLICIT_RTB" --destination-cidr-block 0.0.0.0/0 --instance-id "\$BASTION_ID" 2>/dev/null || true
                 fi
 
                 # 4. Find Image
@@ -355,6 +370,16 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
             if "!PUBLIC_SUBNET_ID!"=="" ( echo ERROR: Could not find a public subnet in VPC !VPC_ID!. && exit /b 1 )
             echo Found public subnet: !PUBLIC_SUBNET_ID!
 
+            set "PRIVATE_SUBNET_ID=${params.AWS_SUBNET_ID}"
+            if "!PRIVATE_SUBNET_ID!"=="" (
+                for /f "tokens=*" %%s in ('call aws ec2 describe-subnets --filters "Name=vpc-id,Values=!VPC_ID!" --query "Subnets[*].SubnetId" --output text') do (
+                    for %%a in (%%s) do (
+                        if "!PRIVATE_SUBNET_ID!"=="" if not "%%a"=="!PUBLIC_SUBNET_ID!" set "PRIVATE_SUBNET_ID=%%a"
+                    )
+                )
+            )
+            echo Using private subnet: !PRIVATE_SUBNET_ID!
+
             :: 2. Security Group Management
             for /f "tokens=*" %%i in ('call aws ec2 describe-security-groups --filters "Name=group-name,Values=production-web-sg" "Name=vpc-id,Values=!VPC_ID!" --query "SecurityGroups[0].GroupId" --output text 2^>nul') do set SG_ID=%%i
             if "!SG_ID!"=="" (
@@ -363,6 +388,9 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
             call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 22 --cidr 0.0.0.0/0 2>nul
             call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 80 --cidr 0.0.0.0/0 2>nul
             call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol icmp --port -1 --cidr 0.0.0.0/0 2>nul
+
+            for /f "tokens=*" %%c in ('call aws ec2 describe-vpcs --vpc-ids "!VPC_ID!" --query "Vpcs[0].CidrBlock" --output text') do set "VPC_CIDR=%%c"
+            call aws ec2 authorize-security-group-ingress --group-id "!SG_ID!" --protocol all --cidr "!VPC_CIDR!" 2>nul
 
             :: 3. Bastion Host (NAT Configuration)
             set "KEY_NAME=${params.SECRET_NAME.replace('-secret','')}"
@@ -390,21 +418,22 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
                 call aws ec2 modify-instance-attribute --instance-id "!BASTION_ID!" --no-source-dest-check
             )
 
-            set "PRIVATE_SUBNET_ID=${params.AWS_SUBNET_ID}"
             if not "!PRIVATE_SUBNET_ID!"=="" if not "!BASTION_ID!"=="" if not "!BASTION_ID!"=="None" (
                 echo Configuring route table for private subnet: !PRIVATE_SUBNET_ID! to use Bastion as NAT
-                for /f "tokens=*" %%i in ('call aws ec2 describe-route-tables --filters "Name=association.subnet-id,Values=!PRIVATE_SUBNET_ID!" --query "RouteTables[0].RouteTableId" --output text') do set "ROUTE_TABLE_ID=%%i"
-                if not "!ROUTE_TABLE_ID!"=="" if not "!ROUTE_TABLE_ID!"=="None" (
-                    call aws ec2 describe-route-tables --route-table-ids "!ROUTE_TABLE_ID!" --filters "Name=route.destination-cidr-block,Values=0.0.0.0/0" "Name=route.instance-id,Values=!BASTION_ID!" --query "RouteTables" --output text | findstr "!BASTION_ID!" >nul
-                    if !ERRORLEVEL! neq 0 (
-                        echo Adding route 0.0.0.0/0 -^> !BASTION_ID! to route table !ROUTE_TABLE_ID!
-                        call aws ec2 replace-route --route-table-id "!ROUTE_TABLE_ID!" --destination-cidr-block 0.0.0.0/0 --instance-id "!BASTION_ID!" 2>nul || call aws ec2 create-route --route-table-id "!ROUTE_TABLE_ID!" --destination-cidr-block 0.0.0.0/0 --instance-id "!BASTION_ID!"
-                    ) else (
-                        echo Route to Bastion NAT already exists.
-                    )
-                ) else (
-                    echo WARNING: Could not find route table for subnet !PRIVATE_SUBNET_ID!.
+                set "EXPLICIT_RTB="
+                for /f "tokens=*" %%r in ('call aws ec2 describe-route-tables --filters "Name=association.subnet-id,Values=!PRIVATE_SUBNET_ID!" --query "RouteTables[0].RouteTableId" --output text 2^>nul') do set "EXPLICIT_RTB=%%r"
+                
+                if "!EXPLICIT_RTB!"=="" set "EXPLICIT_RTB=None"
+                if "!EXPLICIT_RTB!"=="null" set "EXPLICIT_RTB=None"
+                
+                if "!EXPLICIT_RTB!"=="None" (
+                    echo Creating new custom Route Table for private subnet...
+                    for /f "tokens=*" %%r in ('call aws ec2 create-route-table --vpc-id "!VPC_ID!" --query "RouteTable.RouteTableId" --output text') do set "EXPLICIT_RTB=%%r"
+                    call aws ec2 associate-route-table --subnet-id "!PRIVATE_SUBNET_ID!" --route-table-id "!EXPLICIT_RTB!"
                 )
+                
+                echo Routing 0.0.0.0/0 to Bastion !BASTION_ID! in Route Table !EXPLICIT_RTB!...
+                call aws ec2 replace-route --route-table-id "!EXPLICIT_RTB!" --destination-cidr-block 0.0.0.0/0 --instance-id "!BASTION_ID!" 2>nul || call aws ec2 create-route --route-table-id "!EXPLICIT_RTB!" --destination-cidr-block 0.0.0.0/0 --instance-id "!BASTION_ID!" 2>nul
             )
 
             :: 4. Find Image
