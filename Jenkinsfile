@@ -16,6 +16,8 @@ pipeline {
 
         // Cloud Configuration
         string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region for all operations.')
+        string(name: 'AWS_VPC_ID', defaultValue: '', description: 'AWS VPC ID for Packer build and deployment (required if no default VPC exists).')
+        string(name: 'AWS_SUBNET_ID', defaultValue: '', description: 'AWS Subnet ID for Packer build and deployment (required if no default VPC exists).')
         string(name: 'GCP_PROJECT', defaultValue: 'packer-demo-456789', description: 'GCP project ID')
         string(name: 'GCP_ZONE', defaultValue: 'us-central1-a', description: 'GCP zone for all operations.')
         string(name: 'AZURE_RESOURCE_GROUP', defaultValue: 'packer-resources', description: 'Azure resource group')
@@ -157,6 +159,8 @@ def buildImage() {
                 -var "image_name=${params.IMAGE_NAME}" ^
                 -var "image_type=${params.IMAGE_TYPE}" ^
                 -var "region=${params.AWS_REGION}" ^
+                -var "aws_vpc_id=${params.AWS_VPC_ID}" ^
+                -var "aws_subnet_id=${params.AWS_SUBNET_ID}" ^
                 -var "aws_key_name=${keyName}" ^
                 -var "aws_private_key_file=${privateKeyFile}" ^
                 -var "gcp_project=${params.GCP_PROJECT}" ^
@@ -206,21 +210,34 @@ def deployInstance() {
         switch(params.CLOUD) {
             case 'AWS':
                 bat """
-                set SG_ID=
-                for /f "tokens=*" %%i in ('call aws ec2 describe-security-groups --group-names production-web-sg --query "SecurityGroups[0].GroupId" --output text --region ${params.AWS_REGION} 2^>nul') do set SG_ID=%%i
-                if "%SG_ID%"=="" (
-                    for /f "tokens=*" %%i in ('call aws ec2 create-security-group --group-name production-web-sg --description "Production Web SG" --query "GroupId" --output text --region ${params.AWS_REGION}') do set SG_ID=%%i
-                    call aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
-                    call aws ec2 authorize-security-group-ingress --group-id %SG_ID% --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
+                @echo off
+                setlocal enabledelayedexpansion
+                
+                set "VPC_FILTER="
+                set "VPC_ARG="
+                if not "${params.AWS_VPC_ID}"=="" (
+                    set "VPC_FILTER=Name=vpc-id,Values=${params.AWS_VPC_ID}"
+                    set "VPC_ARG=--vpc-id ${params.AWS_VPC_ID}"
+                )
+                
+                for /f "tokens=*" %%i in ('call aws ec2 describe-security-groups --filters "Name=group-name,Values=production-web-sg" !VPC_FILTER! --query "SecurityGroups[0].GroupId" --output text --region ${params.AWS_REGION} 2^>nul') do set SG_ID=%%i
+                if "!SG_ID!"=="" (
+                    for /f "tokens=*" %%i in ('call aws ec2 create-security-group --group-name production-web-sg --description "Production Web SG" !VPC_ARG! --query "GroupId" --output text --region ${params.AWS_REGION}') do set SG_ID=%%i
+                    call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
+                    call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
                 )
                 
                 set KEY_NAME=${params.SECRET_NAME.replace('-secret','')}
-                for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t2.micro --security-group-ids %SG_ID% --key-name %KEY_NAME% --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION}') do set INST_ID=%%i
-                call aws ec2 wait instance-running --instance-ids %INST_ID% --region ${params.AWS_REGION}
-                for /f "tokens=*" %%i in ('call aws ec2 describe-instances --instance-ids %INST_ID% --query "Reservations[0].Instances[0].PublicIpAddress" --output text --region ${params.AWS_REGION}') do set PUBLIC_IP=%%i
                 
-                echo TARGET_INSTANCE_ID=%INST_ID% > env.props
-                echo PUBLIC_IP=%PUBLIC_IP% >> env.props
+                set "SUBNET_ARG="
+                if not "${params.AWS_SUBNET_ID}"=="" set "SUBNET_ARG=--subnet-id ${params.AWS_SUBNET_ID}"
+                
+                for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t2.micro --security-group-ids !SG_ID! --key-name !KEY_NAME! !SUBNET_ARG! --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION}') do set INST_ID=%%i
+                call aws ec2 wait instance-running --instance-ids !INST_ID! --region ${params.AWS_REGION}
+                for /f "tokens=*" %%i in ('call aws ec2 describe-instances --instance-ids !INST_ID! --query "Reservations[0].Instances[0].PublicIpAddress" --output text --region ${params.AWS_REGION}') do set PUBLIC_IP=%%i
+                
+                echo TARGET_INSTANCE_ID=!INST_ID! > env.props
+                echo PUBLIC_IP=!PUBLIC_IP! >> env.props
                 """
                 break
             case 'GCP':
