@@ -32,7 +32,7 @@ pipeline {
 
     environment {
         PACKER_TEMPLATE = 'aws-ubuntu.pkr.hcl'
-        PACKER_EXE = 'packer.exe'
+        PACKER_EXE = 'packer'
     }
 
     stages {
@@ -46,12 +46,6 @@ pipeline {
         stage('Execute Action') {
             steps {
                 script {
-                    // Set PATH for cloud CLIs
-                    bat """
-                    @echo off
-                    set "PATH=%PATH%;C:\\Program Files (x86)\\Google\\Cloud SDK\\google-cloud-sdk\\bin;C:\\Program Files\\Google\\Cloud SDK\\google-cloud-sdk\\bin;%LocalAppData%\\Google\\Cloud SDK\\google-cloud-sdk\\bin"
-                    set "PATH=%PATH%;C:\\Program Files (x86)\\Microsoft SDKs\\Azure\\CLI2\\wbin;C:\\Program Files\\Microsoft SDKs\\Azure\\CLI2\\bin"
-                    """
 
                     withCredentials([
                         usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY'),
@@ -107,8 +101,8 @@ pipeline {
         }
         always {
             script {
-                if (fileExists('private_key.pem')) { bat "del private_key.pem" }
-                if (fileExists('private_key.pem.pub')) { bat "del private_key.pem.pub" }
+                if (fileExists('private_key.pem')) { sh "rm -f private_key.pem" }
+                if (fileExists('private_key.pem.pub')) { sh "rm -f private_key.pem.pub" }
             }
             archiveArtifacts artifacts: 'manifest.json', allowEmptyArchive: true
         }
@@ -118,36 +112,34 @@ pipeline {
 def buildImage() {
     def keyName = "prod-key-${BUILD_NUMBER}"
     env.KEY_NAME = keyName
-    def privateKeyFile = "${WORKSPACE}\\private_key.pem"
+    def privateKeyFile = "${WORKSPACE}/private_key.pem"
     def osType = params.IMAGE_TYPE.toLowerCase()
     def packerSource = ""
 
     // 1. Generate and Store SSH Key
     stage("Setup and Store Key for ${params.CLOUD}") {
-        bat "ssh-keygen -t rsa -b 2048 -f private_key.pem -N \"\""
+        sh "ssh-keygen -t rsa -b 2048 -f private_key.pem -N \"\""
         switch(params.CLOUD) {
             case 'AWS':
                 packerSource = "amazon-ebs.aws_${osType}"
-                bat """
-                call aws ec2 import-key-pair --key-name ${keyName} --public-key-material fileb://private_key.pem.pub --region ${params.AWS_REGION}
-                call aws secretsmanager create-secret --name ${keyName}-secret --secret-string file://private_key.pem --region ${params.AWS_REGION}
+                sh """
+                aws ec2 import-key-pair --key-name ${keyName} --public-key-material fileb://private_key.pem.pub --region ${params.AWS_REGION}
+                aws secretsmanager create-secret --name ${keyName}-secret --secret-string file://private_key.pem --region ${params.AWS_REGION}
                 """
                 break
             case 'GCP':
                 packerSource = "googlecompute.gcp_${osType}"
-                bat """
-                call gcloud secrets create ${keyName}-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} 2>nul
-                call gcloud secrets versions add ${keyName}-secret --data-file=private_key.pem --project=${params.GCP_PROJECT}
+                sh """
+                gcloud secrets create ${keyName}-secret --replication-policy="automatic" --project=${params.GCP_PROJECT} || true
+                gcloud secrets versions add ${keyName}-secret --data-file=private_key.pem --project=${params.GCP_PROJECT}
                 """
                 break
             case 'AZURE':
                 packerSource = "azure-arm.azure_${osType}"
-                bat """
-                set PYTHONHOME=
-                set PYTHONPATH=
-                call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
-                call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
-                call az keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name ${keyName}-secret --file private_key.pem
+                sh """
+                az login --service-principal -u \$ARM_CLIENT_ID -p \$ARM_CLIENT_SECRET --tenant ${params.AZURE_TENANT_ID}
+                az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                az keyvault secret set --vault-name ${params.AZURE_VAULT_NAME} --name ${keyName}-secret --file private_key.pem
                 """
                 break
         }
@@ -156,33 +148,33 @@ def buildImage() {
     // 2. Run Packer Build
     stage("Build Image for ${params.CLOUD}") {
         try {
-            bat """
+            sh """
             ${PACKER_EXE} init .
             ${PACKER_EXE} validate -only=${packerSource} ${PACKER_TEMPLATE}
             
-            ${PACKER_EXE} build ^
-                -only=${packerSource} ^
-                -var "image_name=${params.IMAGE_NAME}" ^
-                -var "image_type=${params.IMAGE_TYPE}" ^
-                -var "region=${params.AWS_REGION}" ^
-                -var "aws_vpc_id=${env.ACTIVE_AWS_VPC_ID}" ^
-                -var "aws_subnet_id=${env.ACTIVE_AWS_SUBNET_ID}" ^
-                -var "aws_key_name=${keyName}" ^
-                -var "aws_private_key_file=${privateKeyFile}" ^
-                -var "gcp_project=${params.GCP_PROJECT}" ^
-                -var "gcp_zone=${params.GCP_ZONE}" ^
-                -var "azure_resource_group=${params.AZURE_RESOURCE_GROUP}" ^
-                -var "azure_location=${params.AZURE_LOCATION}" ^
-                -var "azure_subscription_id=${params.AZURE_SUBSCRIPTION_ID}" ^
-                -var "azure_tenant_id=${params.AZURE_TENANT_ID}" ^
-                -var "azure_client_id=%ARM_CLIENT_ID%" ^
-                -var "azure_client_secret=%ARM_CLIENT_SECRET%" ^
+            ${PACKER_EXE} build \\
+                -only=${packerSource} \\
+                -var "image_name=${params.IMAGE_NAME}" \\
+                -var "image_type=${params.IMAGE_TYPE}" \\
+                -var "region=${params.AWS_REGION}" \\
+                -var "aws_vpc_id=${env.ACTIVE_AWS_VPC_ID}" \\
+                -var "aws_subnet_id=${env.ACTIVE_AWS_SUBNET_ID}" \\
+                -var "aws_key_name=${keyName}" \\
+                -var "aws_private_key_file=${privateKeyFile}" \\
+                -var "gcp_project=${params.GCP_PROJECT}" \\
+                -var "gcp_zone=${params.GCP_ZONE}" \\
+                -var "azure_resource_group=${params.AZURE_RESOURCE_GROUP}" \\
+                -var "azure_location=${params.AZURE_LOCATION}" \\
+                -var "azure_subscription_id=${params.AZURE_SUBSCRIPTION_ID}" \\
+                -var "azure_tenant_id=${params.AZURE_TENANT_ID}" \\
+                -var "azure_client_id=\$ARM_CLIENT_ID" \\
+                -var "azure_client_secret=\$ARM_CLIENT_SECRET" \\
                 ${PACKER_TEMPLATE}
             """
         } finally {
             // This ensures the key is deleted even if the build fails
-            if (fileExists('private_key.pem')) { bat "del private_key.pem" }
-            if (fileExists('private_key.pem.pub')) { bat "del private_key.pem.pub" }
+            if (fileExists('private_key.pem')) { sh "rm -f private_key.pem" }
+            if (fileExists('private_key.pem.pub')) { sh "rm -f private_key.pem.pub" }
         }
     }
 
@@ -215,74 +207,71 @@ def deployInstance() {
     stage("Deploy Instance to ${params.CLOUD}") {
         switch(params.CLOUD) {
             case 'AWS':
-                bat """
-                @echo off
-                setlocal enabledelayedexpansion
+                sh """
+                VPC_FILTER=""
+                VPC_ARG=""
+                if [ -n "${env.ACTIVE_AWS_VPC_ID}" ]; then
+                    VPC_FILTER="Name=vpc-id,Values=${env.ACTIVE_AWS_VPC_ID}"
+                    VPC_ARG="--vpc-id ${env.ACTIVE_AWS_VPC_ID}"
+                fi
                 
-                set "VPC_FILTER="
-                set "VPC_ARG="
-                if not "${env.ACTIVE_AWS_VPC_ID}"=="" (
-                    set "VPC_FILTER=Name=vpc-id,Values=${env.ACTIVE_AWS_VPC_ID}"
-                    set "VPC_ARG=--vpc-id ${env.ACTIVE_AWS_VPC_ID}"
-                )
+                SG_ID=\$(aws ec2 describe-security-groups --filters "Name=group-name,Values=production-web-sg" \$VPC_FILTER --query "SecurityGroups[0].GroupId" --output text --region ${params.AWS_REGION} 2>/dev/null || echo "")
+                if [ -z "\$SG_ID" ] || [ "\$SG_ID" = "None" ]; then
+                    SG_ID=\$(aws ec2 create-security-group --group-name production-web-sg --description "Production Web SG" \$VPC_ARG --query "GroupId" --output text --region ${params.AWS_REGION})
+                    aws ec2 authorize-security-group-ingress --group-id \$SG_ID --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>/dev/null || true
+                    aws ec2 authorize-security-group-ingress --group-id \$SG_ID --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>/dev/null || true
+                fi
                 
-                for /f "tokens=*" %%i in ('call aws ec2 describe-security-groups --filters "Name=group-name,Values=production-web-sg" !VPC_FILTER! --query "SecurityGroups[0].GroupId" --output text --region ${params.AWS_REGION} 2^>nul') do set SG_ID=%%i
-                if "!SG_ID!"=="" (
-                    for /f "tokens=*" %%i in ('call aws ec2 create-security-group --group-name production-web-sg --description "Production Web SG" !VPC_ARG! --query "GroupId" --output text --region ${params.AWS_REGION}') do set SG_ID=%%i
-                    call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
-                    call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
-                )
+                KEY_NAME="${params.SECRET_NAME.replace('-secret','')}"
                 
-                set KEY_NAME=${params.SECRET_NAME.replace('-secret','')}
+                SUBNET_ARG=""
+                if [ -n "${env.ACTIVE_AWS_SUBNET_ID}" ]; then
+                    SUBNET_ARG="--subnet-id ${env.ACTIVE_AWS_SUBNET_ID}"
+                fi
                 
-                set "SUBNET_ARG="
-                if not "${env.ACTIVE_AWS_SUBNET_ID}"=="" set "SUBNET_ARG=--subnet-id ${env.ACTIVE_AWS_SUBNET_ID}"
+                INST_ID=\$(aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t2.micro --security-group-ids \$SG_ID --key-name \$KEY_NAME \$SUBNET_ARG --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION})
+                aws ec2 wait instance-running --instance-ids \$INST_ID --region ${params.AWS_REGION}
+                PUBLIC_IP=\$(aws ec2 describe-instances --instance-ids \$INST_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text --region ${params.AWS_REGION})
                 
-                for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t2.micro --security-group-ids !SG_ID! --key-name !KEY_NAME! !SUBNET_ARG! --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION}') do set INST_ID=%%i
-                call aws ec2 wait instance-running --instance-ids !INST_ID! --region ${params.AWS_REGION}
-                for /f "tokens=*" %%i in ('call aws ec2 describe-instances --instance-ids !INST_ID! --query "Reservations[0].Instances[0].PublicIpAddress" --output text --region ${params.AWS_REGION}') do set PUBLIC_IP=%%i
-                
-                echo TARGET_INSTANCE_ID=!INST_ID! > env.props
-                echo PUBLIC_IP=!PUBLIC_IP! >> env.props
+                echo "TARGET_INSTANCE_ID=\$INST_ID" > env.props
+                echo "PUBLIC_IP=\$PUBLIC_IP" >> env.props
                 """
                 break
             case 'GCP':
-                bat """
-                set INSTANCE_NAME=prod-vm-${BUILD_NUMBER}
-                call gcloud compute firewall-rules create allow-ssh-http --allow tcp:22,tcp:80 --target-tags=prod-web --project=${params.GCP_PROJECT} 2>nul
+                sh """
+                INSTANCE_NAME="prod-vm-${BUILD_NUMBER}"
+                gcloud compute firewall-rules create allow-ssh-http --allow tcp:22,tcp:80 --target-tags=prod-web --project=${params.GCP_PROJECT} 2>/dev/null || true
                 
-                call gcloud compute instances create %INSTANCE_NAME% ^
-                    --image=${params.IMAGE_ID} ^
-                    --project=${params.GCP_PROJECT} ^
-                    --zone=${params.GCP_ZONE} ^
-                    --machine-type=e2-micro ^
-                    --tags=prod-web ^
+                gcloud compute instances create \$INSTANCE_NAME \\
+                    --image=${params.IMAGE_ID} \\
+                    --project=${params.GCP_PROJECT} \\
+                    --zone=${params.GCP_ZONE} \\
+                    --machine-type=e2-micro \\
+                    --tags=prod-web \\
                     --format="get(networkInterfaces[0].accessConfigs[0].natIP)" > nat_ip.txt
                 
-                set /p PUBLIC_IP=<nat_ip.txt
-                echo TARGET_INSTANCE_ID=%INSTANCE_NAME% > env.props
-                echo PUBLIC_IP=%PUBLIC_IP% >> env.props
+                PUBLIC_IP=\$(cat nat_ip.txt)
+                echo "TARGET_INSTANCE_ID=\$INSTANCE_NAME" > env.props
+                echo "PUBLIC_IP=\$PUBLIC_IP" >> env.props
                 """
                 break
             case 'AZURE':
-                bat """
-                set PYTHONHOME=
-                set PYTHONPATH=
-                set VM_NAME=prod-vm-${BUILD_NUMBER}
-                call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
-                call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                sh """
+                VM_NAME="prod-vm-${BUILD_NUMBER}"
+                az login --service-principal -u \$ARM_CLIENT_ID -p \$ARM_CLIENT_SECRET --tenant ${params.AZURE_TENANT_ID}
+                az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
                 
-                call az vm create ^
-                    --resource-group ${params.AZURE_RESOURCE_GROUP} ^
-                    --name %VM_NAME% ^
-                    --size Standard_B2ats_v2 ^
-                    --image "${params.IMAGE_ID}" ^
-                    --admin-username azureuser ^
-                    --public-ip-sku Standard ^
-                    --nsg-rule SSH ^
+                az vm create \\
+                    --resource-group ${params.AZURE_RESOURCE_GROUP} \\
+                    --name \$VM_NAME \\
+                    --size Standard_B2ats_v2 \\
+                    --image "${params.IMAGE_ID}" \\
+                    --admin-username azureuser \\
+                    --public-ip-sku Standard \\
+                    --nsg-rule SSH \\
                     --query "{ip:publicIpAddress, id:id}" --output json > vm_info.json
 
-                call az vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name %VM_NAME% --port 80
+                az vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name \$VM_NAME --port 80
                 """
                 def vmInfo = readJSON file: 'vm_info.json'
                 env.TARGET_INSTANCE_ID = vmInfo.id
@@ -302,18 +291,16 @@ def stopInstance() {
         }
         switch(params.CLOUD) {
             case 'AWS':
-                bat "call aws ec2 stop-instances --instance-ids ${params.INSTANCE_ID} --region ${params.AWS_REGION}"
+                sh "aws ec2 stop-instances --instance-ids ${params.INSTANCE_ID} --region ${params.AWS_REGION}"
                 break
             case 'GCP':
-                bat "call gcloud compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}"
+                sh "gcloud compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}"
                 break
             case 'AZURE':
-                 bat """
-                    set PYTHONHOME=
-                    set PYTHONPATH=
-                    call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
-                    call az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
-                    call az vm deallocate --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}
+                 sh """
+                    az login --service-principal -u \$ARM_CLIENT_ID -p \$ARM_CLIENT_SECRET --tenant ${params.AZURE_TENANT_ID}
+                    az account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                    az vm deallocate --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}
                  """
                 break
         }
@@ -334,42 +321,40 @@ def ensureAwsNetwork() {
                 echo "AWS_VPC_ID or AWS_SUBNET_ID is missing."
                 echo "Checking for AWS Default VPC (Packer requires a Default VPC if no custom VPC is parameterized in the HCL)..."
                 
-                bat """
-                @echo off
-                setlocal enabledelayedexpansion
+                sh """
+                DEF_VPC=\$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text --region ${params.AWS_REGION} 2>/dev/null || echo "")
                 
-                set "DEF_VPC="
-                for /f "tokens=*" %%i in ('call aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text --region ${params.AWS_REGION} 2^>nul') do set DEF_VPC=%%i
+                if [ "\$DEF_VPC" = "None" ] || [ "\$DEF_VPC" = "null" ]; then
+                    DEF_VPC=""
+                fi
                 
-                if "!DEF_VPC!"=="None" set DEF_VPC=
-                if "!DEF_VPC!"=="null" set DEF_VPC=
-                
-                if "!DEF_VPC!"=="" (
+                if [ -z "\$DEF_VPC" ]; then
                     echo No Default VPC found. Restoring the AWS Default VPC in ${params.AWS_REGION}...
-                    for /f "tokens=*" %%i in ('call aws ec2 create-default-vpc --query "Vpc.VpcId" --output text --region ${params.AWS_REGION} 2^>nul') do set DEF_VPC=%%i
-                    timeout /t 5 /nobreak > nul
-                ) else (
-                    echo Found existing Default VPC: !DEF_VPC!
-                )
+                    DEF_VPC=\$(aws ec2 create-default-vpc --query "Vpc.VpcId" --output text --region ${params.AWS_REGION} 2>/dev/null || echo "")
+                    sleep 5
+                else
+                    echo "Found existing Default VPC: \$DEF_VPC"
+                fi
                 
-                if "!DEF_VPC!"=="None" set DEF_VPC=
-                if "!DEF_VPC!"=="null" set DEF_VPC=
+                if [ "\$DEF_VPC" = "None" ] || [ "\$DEF_VPC" = "null" ]; then
+                    DEF_VPC=""
+                fi
                 
-                if "!DEF_VPC!"=="" (
+                if [ -z "\$DEF_VPC" ]; then
                     echo [ERROR] Failed to find or restore the Default VPC.
                     echo Please manually create a VPC and provide AWS_VPC_ID and AWS_SUBNET_ID.
-                    exit /b 1
-                )
+                    exit 1
+                fi
                 
-                echo !DEF_VPC!> auto_vpc.txt
+                echo "\$DEF_VPC" > auto_vpc.txt
                 
-                set "DEF_SUBNET="
-                for /f "tokens=*" %%i in ('call aws ec2 describe-subnets --filters "Name=vpc-id,Values=!DEF_VPC!" --query "Subnets[0].SubnetId" --output text --region ${params.AWS_REGION} 2^>nul') do set DEF_SUBNET=%%i
+                DEF_SUBNET=\$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=\$DEF_VPC" --query "Subnets[0].SubnetId" --output text --region ${params.AWS_REGION} 2>/dev/null || echo "")
                 
-                if "!DEF_SUBNET!"=="None" set DEF_SUBNET=
-                if "!DEF_SUBNET!"=="null" set DEF_SUBNET=
+                if [ "\$DEF_SUBNET" = "None" ] || [ "\$DEF_SUBNET" = "null" ]; then
+                    DEF_SUBNET=""
+                fi
                 
-                echo !DEF_SUBNET!> auto_subnet.txt
+                echo "\$DEF_SUBNET" > auto_subnet.txt
                 """
                 
                 env.ACTIVE_AWS_VPC_ID = readFile('auto_vpc.txt').trim()
