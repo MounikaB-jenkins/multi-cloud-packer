@@ -11,7 +11,7 @@
       <parameterDefinitions>
         <hudson.model.StringParameterDefinition>
           <name>ACTION</name>
-          <description>The action to perform: BUILD a new image, DEPLOY an instance from an image, or STOP a running instance.</description>
+          <description>The action to perform: SETUP_INFRA, BUILD a new image, DEPLOY an instance from an image, or STOP a running instance.</description>
           <defaultValue>BUILD</defaultValue>
           <trim>false</trim>
         </hudson.model.StringParameterDefinition>
