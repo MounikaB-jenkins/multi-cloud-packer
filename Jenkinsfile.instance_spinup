@@ -450,6 +450,7 @@ done
             echo Opening Port 80...
             call "!AZ_EXE!" vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name %VM_NAME% --port 80
             """
+            }
             // Extract IP from JSON
             def vmInfo = readJSON file: 'vm_info.json'
             env.TARGET_INSTANCE_ID = vmInfo.id
@@ -472,34 +473,47 @@ def stopInstance() {
             }
             break
         case 'GCP':
-            bat """
-            @echo off
-            setlocal enabledelayedexpansion
-            set GCLOUD_EXE=${env.GCLOUD_EXE}
-            if "!GCLOUD_EXE!"=="" ( echo ERROR: gcloud CLI not found.; exit /b 1 )
-            call "!GCLOUD_EXE!" compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE}
-            """
-            break
-        case 'AZURE':
-            withCredentials([usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')]) {
+            if (isUnix()) {
+                sh "${env.GCLOUD_EXE} compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE} --quiet"
+            } else {
                 bat """
                 @echo off
                 setlocal enabledelayedexpansion
-                
-                :: Prevent Python environment conflicts for Azure CLI
-                set "PYTHONHOME="
-                set "PYTHONPATH="
-                set "PYTHONEXECUTABLE="
-                
-                set AZ_EXE=${env.AZ_EXE}
-                if "!AZ_EXE!"=="" ( echo ERROR: Azure CLI not found.; exit /b 1 )
-                
-                set ARM_CLIENT_ID=%ARM_CLIENT_ID%
-                set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
-                call "!AZ_EXE!" login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
-                call "!AZ_EXE!" account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
-                call "!AZ_EXE!" vm stop --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}
+                set GCLOUD_EXE=${env.GCLOUD_EXE}
+                if "!GCLOUD_EXE!"=="" ( echo ERROR: gcloud CLI not found.; exit /b 1 )
+                call "!GCLOUD_EXE!" compute instances stop ${params.INSTANCE_ID} --project=${params.GCP_PROJECT} --zone=${params.GCP_ZONE} --quiet
                 """
+            }
+            break
+        case 'AZURE':
+            withCredentials([usernamePassword(credentialsId: 'azure-creds', usernameVariable: 'ARM_CLIENT_ID', passwordVariable: 'ARM_CLIENT_SECRET')]) {
+                if (isUnix()) {
+                    sh """
+                    #!/bin/bash
+                    ${env.AZ_EXE} login --service-principal -u \$ARM_CLIENT_ID -p \$ARM_CLIENT_SECRET --tenant ${params.AZURE_TENANT_ID} >/dev/null 2>&1
+                    ${env.AZ_EXE} account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                    ${env.AZ_EXE} vm deallocate --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}
+                    """
+                } else {
+                    bat """
+                    @echo off
+                    setlocal enabledelayedexpansion
+                    
+                    :: Prevent Python environment conflicts for Azure CLI
+                    set "PYTHONHOME="
+                    set "PYTHONPATH="
+                    set "PYTHONEXECUTABLE="
+                    
+                    set AZ_EXE=${env.AZ_EXE}
+                    if "!AZ_EXE!"=="" ( echo ERROR: Azure CLI not found.; exit /b 1 )
+                    
+                    set ARM_CLIENT_ID=%ARM_CLIENT_ID%
+                    set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
+                    call "!AZ_EXE!" login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID}
+                    call "!AZ_EXE!" account set --subscription ${params.AZURE_SUBSCRIPTION_ID}
+                    call "!AZ_EXE!" vm stop --resource-group ${params.AZURE_RESOURCE_GROUP} --name ${params.INSTANCE_ID}
+                    """
+                }
             }
             break
     }
