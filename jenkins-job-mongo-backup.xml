@@ -54,8 +54,8 @@
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
           <name>BACKUP_DIR</name>
-          <description>Local path on the Jenkins instance to store and retrieve backups.</description>
-          <defaultValue>/var/lib/jenkins/mongo_backups</defaultValue>
+          <description>Local path on the Jenkins instance to store and retrieve backups (defaults to workspace).</description>
+          <defaultValue>mongo_backups</defaultValue>
           <trim>false</trim>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
