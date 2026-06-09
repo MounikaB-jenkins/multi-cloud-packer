@@ -224,6 +224,8 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
                         AL2023_AMI=\$(aws ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-2023.*-x86_64" "Name=state,Values=available" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
                         BASTION_ID=\$(aws ec2 run-instances --image-id "\$AL2023_AMI" --instance-type t3.micro --security-group-ids "\$SG_ID" --key-name "\$KEY_NAME" --subnet-id "\$PUBLIC_SUBNET_ID" --associate-public-ip-address --user-data file://bastion_userdata.sh --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=bastion-host}]' --query "Instances[0].InstanceId" --output text)
                         aws ec2 wait instance-running --instance-ids "\$BASTION_ID"
+                        echo "Waiting 45 seconds for bastion user-data script to complete..."
+                        sleep 45
                     fi
                     ACTIVE_BASTION_IP=\$(aws ec2 describe-instances --instance-ids "\$BASTION_ID" --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
                 else
@@ -375,6 +377,8 @@ iptables -t nat -A POSTROUTING -o $DEFAULT_IFACE -j MASQUERADE
                     for /f "tokens=*" %%i in ('call aws ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-2023.*-x86_64" "Name=state,Values=available" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text') do set "AL2023_AMI=%%i"
                     for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id "!AL2023_AMI!" --instance-type t3.micro --security-group-ids "!SG_ID!" --key-name "!KEY_NAME!" --subnet-id "!PUBLIC_SUBNET_ID!" --associate-public-ip-address --user-data file://bastion_userdata.sh --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=bastion-host}]" --query "Instances[0].InstanceId" --output text') do set "BASTION_ID=%%i"
                     call aws ec2 wait instance-running --instance-ids "!BASTION_ID!"
+                    echo Waiting 45 seconds for bastion user-data script to complete...
+                    ping 127.0.0.1 -n 46 > nul
                 )
                 for /f "tokens=*" %%i in ('call aws ec2 describe-instances --instance-ids "!BASTION_ID!" --query "Reservations[0].Instances[0].PublicIpAddress" --output text') do set "ACTIVE_BASTION_IP=%%i"
             ) else (
