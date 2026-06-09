@@ -95,6 +95,104 @@ pipeline {
             }
         }
 
+        stage('Ensure AWS Network') {
+            steps {
+                script {
+                    def vpcId = params.AWS_VPC_ID != null ? params.AWS_VPC_ID.trim() : ''
+                    def subnetId = params.AWS_SUBNET_ID != null ? params.AWS_SUBNET_ID.trim() : ''
+                    
+                    env.ACTIVE_AWS_VPC_ID = vpcId
+                    env.ACTIVE_AWS_SUBNET_ID = subnetId
+                    
+                    if ((params.CLOUD_PROVIDER == 'ALL' || params.CLOUD_PROVIDER == 'AWS') && (vpcId == '' || subnetId == '')) {
+                        echo "AWS_VPC_ID or AWS_SUBNET_ID is missing. Checking for AWS Default VPC..."
+                        withCredentials([
+                            usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')
+                        ]) {
+                            if (isUnix()) {
+                                sh """
+                                DEF_VPC=\$(aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text --region ${params.AWS_REGION} 2>/dev/null || echo "")
+                                
+                                if [ "\$DEF_VPC" = "None" ] || [ "\$DEF_VPC" = "null" ]; then
+                                    DEF_VPC=""
+                                fi
+                                
+                                if [ -z "\$DEF_VPC" ]; then
+                                    echo "No Default VPC found. Restoring the AWS Default VPC in ${params.AWS_REGION}..."
+                                    DEF_VPC=\$(aws ec2 create-default-vpc --query "Vpc.VpcId" --output text --region ${params.AWS_REGION} 2>/dev/null || echo "")
+                                    sleep 5
+                                else
+                                    echo "Found existing Default VPC: \$DEF_VPC"
+                                fi
+                                
+                                if [ "\$DEF_VPC" = "None" ] || [ "\$DEF_VPC" = "null" ]; then
+                                    DEF_VPC=""
+                                fi
+                                
+                                if [ -z "\$DEF_VPC" ]; then
+                                    echo "[ERROR] Failed to find or restore the Default VPC."
+                                    echo "Please manually create a VPC and provide AWS_VPC_ID and AWS_SUBNET_ID."
+                                    exit 1
+                                fi
+                                
+                                echo "\$DEF_VPC" > auto_vpc.txt
+                                
+                                DEF_SUBNET=\$(aws ec2 describe-subnets --filters "Name=vpc-id,Values=\$DEF_VPC" --query "Subnets[0].SubnetId" --output text --region ${params.AWS_REGION} 2>/dev/null || echo "")
+                                
+                                if [ "\$DEF_SUBNET" = "None" ] || [ "\$DEF_SUBNET" = "null" ]; then
+                                    DEF_SUBNET=""
+                                fi
+                                
+                                echo "\$DEF_SUBNET" > auto_subnet.txt
+                                """
+                                env.ACTIVE_AWS_VPC_ID = readFile('auto_vpc.txt').trim()
+                                env.ACTIVE_AWS_SUBNET_ID = readFile('auto_subnet.txt').trim()
+                            } else {
+                                bat """
+                                @echo off
+                                setlocal enabledelayedexpansion
+                                
+                                set "DEF_VPC="
+                                for /f "tokens=*" %%i in ('call aws ec2 describe-vpcs --filters "Name=isDefault,Values=true" --query "Vpcs[0].VpcId" --output text --region ${params.AWS_REGION} 2^>nul') do set DEF_VPC=%%i
+                                
+                                if "!DEF_VPC!"=="None" set DEF_VPC=
+                                if "!DEF_VPC!"=="null" set DEF_VPC=
+                                
+                                if "!DEF_VPC!"=="" (
+                                    echo No Default VPC found. Restoring the AWS Default VPC in ${params.AWS_REGION}...
+                                    for /f "tokens=*" %%i in ('call aws ec2 create-default-vpc --query "Vpc.VpcId" --output text --region ${params.AWS_REGION} 2^>nul') do set DEF_VPC=%%i
+                                    timeout /t 5 /nobreak > nul
+                                ) else (
+                                    echo Found existing Default VPC: !DEF_VPC!
+                                )
+                                
+                                if "!DEF_VPC!"=="None" set DEF_VPC=
+                                if "!DEF_VPC!"=="null" set DEF_VPC=
+                                
+                                if "!DEF_VPC!"=="" (
+                                    echo [ERROR] Failed to find or restore the Default VPC.
+                                    exit /b 1
+                                )
+                                
+                                echo !DEF_VPC!> auto_vpc.txt
+                                
+                                set "DEF_SUBNET="
+                                for /f "tokens=*" %%i in ('call aws ec2 describe-subnets --filters "Name=vpc-id,Values=!DEF_VPC!" --query "Subnets[0].SubnetId" --output text --region ${params.AWS_REGION} 2^>nul') do set DEF_SUBNET=%%i
+                                
+                                if "!DEF_SUBNET!"=="None" set DEF_SUBNET=
+                                if "!DEF_SUBNET!"=="null" set DEF_SUBNET=
+                                
+                                echo !DEF_SUBNET!> auto_subnet.txt
+                                """
+                                env.ACTIVE_AWS_VPC_ID = readFile('auto_vpc.txt').trim()
+                                env.ACTIVE_AWS_SUBNET_ID = readFile('auto_subnet.txt').trim()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         stage('Setup and Store Keys') {
             steps {
                 script {
@@ -300,8 +398,8 @@ pipeline {
                             packer build \\
                                 -var "image_name=${params.IMAGE_NAME}" \\
                                 -var "region=${params.AWS_REGION}" \\
-                                -var "aws_vpc_id=${params.AWS_VPC_ID}" \\
-                                -var "aws_subnet_id=${params.AWS_SUBNET_ID}" \\
+                                -var "aws_vpc_id=${env.ACTIVE_AWS_VPC_ID}" \\
+                                -var "aws_subnet_id=${env.ACTIVE_AWS_SUBNET_ID}" \\
                                 -var "aws_key_name=${env.KEY_NAME}" \\
                                 -var "aws_private_key_file=${env.AWS_PRIVATE_KEY_FILE}" \\
                                 -var "gcp_project=${params.GCP_PROJECT}" \\
@@ -327,8 +425,8 @@ pipeline {
                         packer.exe build ^
                             -var "image_name=${params.IMAGE_NAME}" ^
                             -var "region=${params.AWS_REGION}" ^
-                            -var "aws_vpc_id=${params.AWS_VPC_ID}" ^
-                            -var "aws_subnet_id=${params.AWS_SUBNET_ID}" ^
+                            -var "aws_vpc_id=${env.ACTIVE_AWS_VPC_ID}" ^
+                            -var "aws_subnet_id=${env.ACTIVE_AWS_SUBNET_ID}" ^
                             -var "aws_key_name=%KEY_NAME%" ^
                             -var "aws_private_key_file=%AWS_PRIVATE_KEY_FILE%" ^
                             -var "gcp_project=${params.GCP_PROJECT}" ^
