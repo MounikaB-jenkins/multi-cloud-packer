@@ -54,8 +54,6 @@ pipeline {
                                 echo "ERROR: Failed to connect via Bastion. Check your SSH Key or IPs."
                                 exit 1
                             fi
-                            echo "Tunneling via Bastion as \$BASTION_USER to target as \$TARGET_USER..."
-                            ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" \$TARGET_USER@${params.TARGET_PRIVATE_IP}
                         else
                             echo "Determining SSH user for Target (${params.TARGET_PRIVATE_IP})..."
                             if ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes ubuntu@${params.TARGET_PRIVATE_IP} "echo OK" >/dev/null 2>&1; then
@@ -66,10 +64,39 @@ pipeline {
                                 echo "ERROR: Failed to connect to Target. Check your SSH Key or IP."
                                 exit 1
                             fi
+                        fi
+                        
+                        echo "Ensuring target MongoDB is configured as a Replica Set for oplog backup..."
+                        cat << 'EOF' > config_mongo.sh
+#!/bin/bash
+MONGO_USER="$1"
+MONGO_PASS="$2"
+if ! grep -q 'replSetName' /etc/mongod.conf; then
+    echo 'Configuring Replica Set in /etc/mongod.conf...'
+    echo -e '\nreplication:\n  replSetName: "rs0"' | sudo tee -a /etc/mongod.conf
+    sudo systemctl restart mongod
+    sleep 15
+    mongosh admin -u "$MONGO_USER" -p "$MONGO_PASS" --eval "rs.initiate()"
+    sleep 10
+fi
+mongosh admin -u "$MONGO_USER" -p "$MONGO_PASS" --eval "db.dummy.insertOne({init: 1}); db.dummy.drop();"
+EOF
+
+                        if [ -n "${params.BASTION_IP}" ]; then
+                            scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" config_mongo.sh \$TARGET_USER@${params.TARGET_PRIVATE_IP}:/tmp/config_mongo.sh
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" \$TARGET_USER@${params.TARGET_PRIVATE_IP} "bash /tmp/config_mongo.sh '${env.MONGO_USER}' '${env.MONGO_PASS}'"
+                            
+                            echo "Tunneling via Bastion as \$BASTION_USER to target as \$TARGET_USER..."
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" \$TARGET_USER@${params.TARGET_PRIVATE_IP}
+                        else
+                            scp -i private_key.pem -o StrictHostKeyChecking=no config_mongo.sh \$TARGET_USER@${params.TARGET_PRIVATE_IP}:/tmp/config_mongo.sh
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no \$TARGET_USER@${params.TARGET_PRIVATE_IP} "bash /tmp/config_mongo.sh '${env.MONGO_USER}' '${env.MONGO_PASS}'"
+                            
                             echo "Tunneling directly to Private IP as \$TARGET_USER..."
                             ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 \$TARGET_USER@${params.TARGET_PRIVATE_IP}
                         fi
-                        
+                        rm -f config_mongo.sh
+
                         echo "Waiting 5 seconds for tunnel to establish..."
                         sleep 5
                         """
@@ -150,6 +177,7 @@ pipeline {
             sh """
             pkill -f "27018:127.0.0.1:27017" || true
             rm -f private_key.pem mongo_creds.json
+            rm -f config_mongo.sh
             rm -f mongo_backup_*.tar.gz
             """
         }
