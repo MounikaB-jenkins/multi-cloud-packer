@@ -1,7 +1,7 @@
 <?xml version='1.1' encoding='UTF-8'?>
 <flow-definition plugin="workflow-job@1306.v9a9cd34d1ed2">
   <actions/>
-  <description>MongoDB Backup and Restore Pipeline using Oplog</description>
+  <description>Mongodbserver_OPS: Backup and Restore Pipeline using Oplog</description>
   <keepDependencies>false</keepDependencies>
   <properties>
     <hudson.model.ParametersDefinitionProperty>
@@ -17,9 +17,39 @@
           </choices>
         </hudson.model.ChoiceParameterDefinition>
         <hudson.model.StringParameterDefinition>
-          <name>MONGO_URI</name>
-          <description>MongoDB connection string (e.g., mongodb://user:pass@127.0.0.1:27017/?authSource=admin)</description>
-          <defaultValue>mongodb://127.0.0.1:27017</defaultValue>
+          <name>TARGET_PRIVATE_IP</name>
+          <description>Private IP of the MongoDB instance.</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>BASTION_IP</name>
+          <description>Public IP of the Bastion Host (Leave empty if Jenkins can reach the Private IP directly).</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>SSH_USER</name>
+          <description>SSH username for the instances (e.g., ec2-user or ubuntu).</description>
+          <defaultValue>ec2-user</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>SECRET_NAME</name>
+          <description>Name of the AWS secret containing the SSH key.</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>MONGO_CREDENTIALS_SECRET</name>
+          <description>AWS Secret name containing MongoDB credentials.</description>
+          <defaultValue>mongodb-creds</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>AWS_REGION</name>
+          <description>AWS region for the secrets.</description>
+          <defaultValue>us-east-1</defaultValue>
           <trim>false</trim>
         </hudson.model.StringParameterDefinition>
         <hudson.model.StringParameterDefinition>
