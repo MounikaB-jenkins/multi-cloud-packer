@@ -193,7 +193,7 @@ done
                 SUBNET_ARG=""
                 if [ -n "${params.AWS_SUBNET_ID}" ]; then SUBNET_ARG="--subnet-id ${params.AWS_SUBNET_ID}"; fi
                 
-                INST_ID=\$(aws ec2 run-instances --image-id "\$TARGET_IMAGE" --instance-type t3.micro --security-group-ids "\$SG_ID" --key-name "\$KEY_NAME" --no-associate-public-ip-address \$SUBNET_ARG --query "Instances[0].InstanceId" --output text)
+                INST_ID=\$(aws ec2 run-instances --image-id "\$TARGET_IMAGE" --instance-type t3.micro --security-group-ids "\$SG_ID" --key-name "\$KEY_NAME" --associate-public-ip-address \$SUBNET_ARG --query "Instances[0].InstanceId" --output text)
                 if [ -z "\$INST_ID" ]; then echo "ERROR: Failed to launch instance."; exit 1; fi
                 
                 aws ec2 wait instance-running --instance-ids "\$INST_ID"
@@ -277,7 +277,7 @@ done
             set "SUBNET_ARG="
             if not "${params.AWS_SUBNET_ID}"=="" set "SUBNET_ARG=--subnet-id ${params.AWS_SUBNET_ID}"
             
-            for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id !TARGET_IMAGE! --instance-type t3.micro --security-group-ids !SG_ID! --key-name !KEY_NAME! --no-associate-public-ip-address !SUBNET_ARG! --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
+            for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id !TARGET_IMAGE! --instance-type t3.micro --security-group-ids !SG_ID! --key-name !KEY_NAME! --associate-public-ip-address !SUBNET_ARG! --query "Instances[0].InstanceId" --output text') do set INST_ID=%%i
             
             if "!INST_ID!"=="" (
                 echo ERROR: Failed to launch instance. Check AWS CLI output.
@@ -350,7 +350,6 @@ done
                     --zone=${params.GCP_ZONE} \\
                     --machine-type=e2-micro \\
                     --tags=prod-web \\
-                    --no-address \\
                     --format="get(networkInterfaces[0].networkIP)" > private_ip.txt || { echo "GCP Instance launch failed."; exit 1; }
                 
                 PRIVATE_IP=\$(cat private_ip.txt)
@@ -400,7 +399,6 @@ done
                 --zone=${params.GCP_ZONE} ^
                 --machine-type=e2-micro ^
                 --tags=prod-web ^
-                --no-address ^
                 --format="get(networkInterfaces[0].networkIP)" > private_ip.txt
             
             if %ERRORLEVEL% neq 0 (
@@ -457,7 +455,6 @@ done
                     --size Standard_B2ats_v2 \\
                     --image "${params.IMAGE_ID}" \\
                     --admin-username azureuser \\
-                    --public-ip-address "" \\
                     --nsg-rule SSH \\
                     --ssh-key-values public_key.pub \\
                     --query "{ip:privateIps, id:id}" --output json > vm_info.json || { echo "Azure VM launch failed."; exit 1; }
@@ -531,7 +528,6 @@ done
                 --size Standard_B2ats_v2 ^
                 --image ${params.IMAGE_ID} ^
                 --admin-username azureuser ^
-                --public-ip-address "" ^
                 --nsg-rule SSH ^
                 --ssh-key-values public_key.pub ^
                 --query "{ip:privateIps, id:id}" --output json > vm_info.json
