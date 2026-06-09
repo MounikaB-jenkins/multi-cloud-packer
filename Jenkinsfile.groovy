@@ -300,6 +300,8 @@ def buildImage() {
                     -var "image_name=${params.IMAGE_NAME}" \\
                     -var "image_type=${params.IMAGE_TYPE}" \\
                     -var "region=${params.AWS_REGION}" \\
+                    -var "aws_vpc_id=${params.AWS_VPC_ID}" \\
+                    -var "aws_subnet_id=${params.AWS_SUBNET_ID}" \\
                     -var "aws_key_name=${keyName}" \\
                     -var "aws_private_key_file=${privateKeyFile}" \\
                     -var "gcp_project=${params.GCP_PROJECT}" \\
@@ -322,6 +324,8 @@ def buildImage() {
                     -var "image_name=${params.IMAGE_NAME}" ^
                     -var "image_type=${params.IMAGE_TYPE}" ^
                     -var "region=${params.AWS_REGION}" ^
+                    -var "aws_vpc_id=${params.AWS_VPC_ID}" ^
+                    -var "aws_subnet_id=${params.AWS_SUBNET_ID}" ^
                     -var "aws_key_name=${keyName}" ^
                     -var "aws_private_key_file=${privateKeyFile}" ^
                     -var "gcp_project=${params.GCP_PROJECT}" ^
@@ -462,16 +466,28 @@ EOF
                     export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
                     export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
                     
-                    SG_ID=\$(aws ec2 describe-security-groups --group-names production-web-sg --query "SecurityGroups[0].GroupId" --output text --region ${params.AWS_REGION} 2>/dev/null)
+                    if [ -n "${params.AWS_VPC_ID}" ]; then
+                        VPC_FILTER="Name=vpc-id,Values=${params.AWS_VPC_ID}"
+                        VPC_ARG="--vpc-id ${params.AWS_VPC_ID}"
+                    else
+                        VPC_FILTER=""
+                        VPC_ARG=""
+                    fi
+                    
+                    SG_ID=\$(aws ec2 describe-security-groups --filters "Name=group-name,Values=production-web-sg" \$VPC_FILTER --query "SecurityGroups[0].GroupId" --output text --region ${params.AWS_REGION} 2>/dev/null)
                     if [ -z "\$SG_ID" ] || [ "\$SG_ID" == "None" ]; then
-                        SG_ID=\$(aws ec2 create-security-group --group-name production-web-sg --description "Production Web SG" --query "GroupId" --output text --region ${params.AWS_REGION})
+                        SG_ID=\$(aws ec2 create-security-group --group-name production-web-sg --description "Production Web SG" \$VPC_ARG --query "GroupId" --output text --region ${params.AWS_REGION})
                     fi
                     aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>/dev/null || true
                     aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>/dev/null || true
                     aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol icmp --port -1 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>/dev/null || true
 
                     KEY_NAME="${params.SECRET_NAME.replace('-secret','')}"
-                    INST_ID=\$(aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t3.micro --security-group-ids "\$SG_ID" --key-name "\$KEY_NAME" --no-associate-public-ip-address --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION})
+                    
+                    SUBNET_ARG=""
+                    if [ -n "${params.AWS_SUBNET_ID}" ]; then SUBNET_ARG="--subnet-id ${params.AWS_SUBNET_ID}"; fi
+                    
+                    INST_ID=\$(aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t3.micro --security-group-ids "\$SG_ID" --key-name "\$KEY_NAME" --no-associate-public-ip-address \$SUBNET_ARG --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION})
                     if [ -z "\$INST_ID" ]; then echo "ERROR: Failed to launch instance."; exit 1; fi
                     
                     aws ec2 wait instance-running --instance-ids "\$INST_ID" --region ${params.AWS_REGION}
@@ -498,17 +514,28 @@ EOF
                 bat """
                 @echo off
                 setlocal enabledelayedexpansion
-                set SG_ID=
-                for /f "tokens=*" %%i in ('call aws ec2 describe-security-groups --group-names production-web-sg --query "SecurityGroups[0].GroupId" --output text --region ${params.AWS_REGION} 2^>nul') do set SG_ID=%%i
+                
+                set "VPC_FILTER="
+                set "VPC_ARG="
+                if not "${params.AWS_VPC_ID}"=="" (
+                    set "VPC_FILTER=Name=vpc-id,Values=${params.AWS_VPC_ID}"
+                    set "VPC_ARG=--vpc-id ${params.AWS_VPC_ID}"
+                )
+                
+                for /f "tokens=*" %%i in ('call aws ec2 describe-security-groups --filters "Name=group-name,Values=production-web-sg" !VPC_FILTER! --query "SecurityGroups[0].GroupId" --output text --region ${params.AWS_REGION} 2^>nul') do set SG_ID=%%i
                 if "!SG_ID!"=="" (
-                    for /f "tokens=*" %%i in ('call aws ec2 create-security-group --group-name production-web-sg --description "Production Web SG" --query "GroupId" --output text --region ${params.AWS_REGION}') do set SG_ID=%%i
+                    for /f "tokens=*" %%i in ('call aws ec2 create-security-group --group-name production-web-sg --description "Production Web SG" !VPC_ARG! --query "GroupId" --output text --region ${params.AWS_REGION}') do set SG_ID=%%i
                     call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 22 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
                     call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 80 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
                     call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol icmp --port -1 --cidr 0.0.0.0/0 --region ${params.AWS_REGION} 2>nul
                 )
                 
                 set KEY_NAME=${params.SECRET_NAME.replace('-secret','')}
-                for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t3.micro --security-group-ids !SG_ID! --key-name !KEY_NAME! --no-associate-public-ip-address --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION}') do set INST_ID=%%i
+                
+                set "SUBNET_ARG="
+                if not "${params.AWS_SUBNET_ID}"=="" set "SUBNET_ARG=--subnet-id ${params.AWS_SUBNET_ID}"
+                
+                for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id ${params.IMAGE_ID} --instance-type t3.micro --security-group-ids !SG_ID! --key-name !KEY_NAME! --no-associate-public-ip-address !SUBNET_ARG! --query "Instances[0].InstanceId" --output text --region ${params.AWS_REGION}') do set INST_ID=%%i
                 
                 if "!INST_ID!"=="" (
                     echo ERROR: Failed to launch instance. Check AWS CLI output.

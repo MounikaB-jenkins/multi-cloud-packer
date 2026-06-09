@@ -115,6 +115,18 @@ variable "azure_tenant_id" {
   description = "Azure tenant ID"
 }
 
+variable "aws_vpc_id" {
+  type        = string
+  default     = ""
+  description = "AWS VPC ID for the builder instance"
+}
+
+variable "aws_subnet_id" {
+  type        = string
+  default     = ""
+  description = "AWS Subnet ID for the builder instance"
+}
+
 variable "aws_ami_regions" {
   type        = list(string)
   default     = []
@@ -155,6 +167,8 @@ source "amazon-ebs" "aws_linux" {
   associate_public_ip_address = !var.disable_public_ip
   ssh_keypair_name  = var.aws_key_name
   ssh_private_key_file = var.aws_private_key_file
+  vpc_id            = var.aws_vpc_id != "" ? var.aws_vpc_id : null
+  subnet_id         = var.aws_subnet_id != "" ? var.aws_subnet_id : null
 
   source_ami_filter {
     filters = {
@@ -248,6 +262,8 @@ source "amazon-ebs" "aws_windows" {
   instance_type     = var.instance_type
   associate_public_ip_address = !var.disable_public_ip
   ssh_keypair_name  = var.aws_key_name
+  vpc_id            = var.aws_vpc_id != "" ? var.aws_vpc_id : null
+  subnet_id         = var.aws_subnet_id != "" ? var.aws_subnet_id : null
 
   source_ami_filter {
     filters = {

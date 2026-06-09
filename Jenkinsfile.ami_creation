@@ -10,6 +10,10 @@ properties([
         // Dynamic Parameters that render ONLY if their respective cloud is selected
         [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'AWS Region', name: 'AWS_REGION', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AWS" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'us-east-1\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'us-east-1\'>" }']]],
         
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'AWS VPC ID (optional)', name: 'AWS_VPC_ID', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AWS" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'\'>" }']]],
+        
+        [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'AWS Subnet ID (optional)', name: 'AWS_SUBNET_ID', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AWS" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'\'>" }']]],
+        
         [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'GCP Project ID', name: 'GCP_PROJECT', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "GCP" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'packer-demo-456789\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'packer-demo-456789\'>" }']]],
         
         [$class: 'DynamicReferenceParameter', choiceType: 'ET_FORMATTED_HTML', description: 'AWS Copy Regions (comma-separated)', name: 'AWS_COPY_REGIONS', omitValueField: true, referencedParameters: 'CLOUD_PROVIDER', script: [$class: 'GroovyScript', fallbackScript: [classpath: [], sandbox: true, script: 'return "error"'], script: [classpath: [], sandbox: true, script: 'if (CLOUD_PROVIDER == "AWS" || CLOUD_PROVIDER == "ALL") { return "<input type=\'text\' class=\'setting-input\' name=\'value\' value=\'\'>" } else { return "<i>N/A (Not required)</i><input type=\'hidden\' name=\'value\' value=\'\'>" }']]],
@@ -296,6 +300,8 @@ pipeline {
                             packer build \\
                                 -var "image_name=${params.IMAGE_NAME}" \\
                                 -var "region=${params.AWS_REGION}" \\
+                                -var "aws_vpc_id=${params.AWS_VPC_ID}" \\
+                                -var "aws_subnet_id=${params.AWS_SUBNET_ID}" \\
                                 -var "aws_key_name=${env.KEY_NAME}" \\
                                 -var "aws_private_key_file=${env.AWS_PRIVATE_KEY_FILE}" \\
                                 -var "gcp_project=${params.GCP_PROJECT}" \\
@@ -321,6 +327,8 @@ pipeline {
                         packer.exe build ^
                             -var "image_name=${params.IMAGE_NAME}" ^
                             -var "region=${params.AWS_REGION}" ^
+                            -var "aws_vpc_id=${params.AWS_VPC_ID}" ^
+                            -var "aws_subnet_id=${params.AWS_SUBNET_ID}" ^
                             -var "aws_key_name=%KEY_NAME%" ^
                             -var "aws_private_key_file=%AWS_PRIVATE_KEY_FILE%" ^
                             -var "gcp_project=${params.GCP_PROJECT}" ^
