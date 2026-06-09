@@ -291,16 +291,30 @@ EOF
                             echo "--------------------------------------------------"
                             if [ -n "${params.BASTION_IP}" ]; then
                                 echo "Uploading operation script to instance via Bastion..."
-                                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ${params.SSH_USER}@${params.BASTION_IP}" mongo_script.sh ${params.SSH_USER}@${params.PRIVATE_IP}:/tmp/mongo_script.sh
-                                
-                                echo "Executing MongoDB operation: ${params.MONGO_ACTION}"
-                                ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ${params.SSH_USER}@${params.BASTION_IP}" ${params.SSH_USER}@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                                if scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@${params.BASTION_IP}" mongo_script.sh ubuntu@${params.PRIVATE_IP}:/tmp/mongo_script.sh 2>/dev/null; then
+                                    TARGET_USER="ubuntu"
+                                    BASTION_USER="ec2-user"
+                                elif scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@${params.BASTION_IP}" mongo_script.sh ec2-user@${params.PRIVATE_IP}:/tmp/mongo_script.sh 2>/dev/null; then
+                                    TARGET_USER="ec2-user"
+                                    BASTION_USER="ec2-user"
+                                else
+                                    echo "ERROR: Failed to connect via Bastion. Check your SSH Key or IPs."
+                                    exit 1
+                                fi
+                                echo "Executing MongoDB operation: ${params.MONGO_ACTION} as \$TARGET_USER"
+                                ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" \$TARGET_USER@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
                             else
                                 echo "Uploading operation script directly to Private IP..."
-                                scp -i private_key.pem -o StrictHostKeyChecking=no mongo_script.sh ${params.SSH_USER}@${params.PRIVATE_IP}:/tmp/mongo_script.sh
-                                
-                                echo "Executing MongoDB operation: ${params.MONGO_ACTION}"
-                                ssh -i private_key.pem -o StrictHostKeyChecking=no ${params.SSH_USER}@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                                if scp -i private_key.pem -o StrictHostKeyChecking=no mongo_script.sh ubuntu@${params.PRIVATE_IP}:/tmp/mongo_script.sh 2>/dev/null; then
+                                    TARGET_USER="ubuntu"
+                                elif scp -i private_key.pem -o StrictHostKeyChecking=no mongo_script.sh ec2-user@${params.PRIVATE_IP}:/tmp/mongo_script.sh 2>/dev/null; then
+                                    TARGET_USER="ec2-user"
+                                else
+                                    echo "ERROR: Failed to connect to Target. Check your SSH Key or IP."
+                                    exit 1
+                                fi
+                                echo "Executing MongoDB operation: ${params.MONGO_ACTION} as \$TARGET_USER"
+                                ssh -i private_key.pem -o StrictHostKeyChecking=no \$TARGET_USER@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
                             fi
                             echo "--------------------------------------------------"
                             
@@ -316,16 +330,36 @@ EOF
                             echo --------------------------------------------------
                             if not "${params.BASTION_IP}"=="" (
                                 echo Uploading operation script to instance via Bastion...
-                                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ${params.SSH_USER}@${params.BASTION_IP}" mongo_script.sh ${params.SSH_USER}@${params.PRIVATE_IP}:/tmp/mongo_script.sh
-                                
-                                echo Executing MongoDB operation: ${params.MONGO_ACTION}
-                                ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ${params.SSH_USER}@${params.BASTION_IP}" ${params.SSH_USER}@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@${params.BASTION_IP}" mongo_script.sh ubuntu@${params.PRIVATE_IP}:/tmp/mongo_script.sh >nul 2>&1
+                                if !ERRORLEVEL! equ 0 (
+                                    echo Executing MongoDB operation: ${params.MONGO_ACTION} as ubuntu
+                                    ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@${params.BASTION_IP}" ubuntu@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                                ) else (
+                                    scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@${params.BASTION_IP}" mongo_script.sh ec2-user@${params.PRIVATE_IP}:/tmp/mongo_script.sh >nul 2>&1
+                                    if !ERRORLEVEL! equ 0 (
+                                        echo Executing MongoDB operation: ${params.MONGO_ACTION} as ec2-user
+                                        ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@${params.BASTION_IP}" ec2-user@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                                    ) else (
+                                        echo ERROR: Failed to connect via Bastion.
+                                        exit /b 1
+                                    )
+                                )
                             ) else (
                                 echo Uploading operation script directly to Private IP...
-                                scp -i private_key.pem -o StrictHostKeyChecking=no mongo_script.sh ${params.SSH_USER}@${params.PRIVATE_IP}:/tmp/mongo_script.sh
-                                
-                                echo Executing MongoDB operation: ${params.MONGO_ACTION}
-                                ssh -i private_key.pem -o StrictHostKeyChecking=no ${params.SSH_USER}@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                                scp -i private_key.pem -o StrictHostKeyChecking=no mongo_script.sh ubuntu@${params.PRIVATE_IP}:/tmp/mongo_script.sh >nul 2>&1
+                                if !ERRORLEVEL! equ 0 (
+                                    echo Executing MongoDB operation: ${params.MONGO_ACTION} as ubuntu
+                                    ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                                ) else (
+                                    scp -i private_key.pem -o StrictHostKeyChecking=no mongo_script.sh ec2-user@${params.PRIVATE_IP}:/tmp/mongo_script.sh >nul 2>&1
+                                    if !ERRORLEVEL! equ 0 (
+                                        echo Executing MongoDB operation: ${params.MONGO_ACTION} as ec2-user
+                                        ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                                    ) else (
+                                        echo ERROR: Failed to connect to Target.
+                                        exit /b 1
+                                    )
+                                )
                             )
                             echo --------------------------------------------------
                             
