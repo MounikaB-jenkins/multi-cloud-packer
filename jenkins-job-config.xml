@@ -9,36 +9,51 @@
     </com.coralogix.jenkins.integration.plugins.CoralogixPlugin>
     <hudson.model.ParametersDefinitionProperty>
       <parameterDefinitions>
-        <hudson.model.StringParameterDefinition>
+        <hudson.model.ChoiceParameterDefinition>
           <name>ACTION</name>
-          <description>The action to perform: SETUP_INFRA, BUILD a new image, DEPLOY an instance from an image, or STOP a running instance.</description>
-          <defaultValue>BUILD</defaultValue>
-          <trim>false</trim>
-        </hudson.model.StringParameterDefinition>
+          <description>The action to perform: SETUP_INFRA to create networking, BUILD a new image, DEPLOY an instance from an image, or STOP a running instance.</description>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>SETUP_INFRA</string>
+              <string>BUILD</string>
+              <string>DEPLOY</string>
+              <string>STOP</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
         <hudson.model.StringParameterDefinition>
           <name>BRANCH_NAME</name>
           <description>The Git branch to checkout and execute.</description>
           <defaultValue>development</defaultValue>
           <trim>true</trim>
         </hudson.model.StringParameterDefinition>
-        <hudson.model.StringParameterDefinition>
+        <hudson.model.ChoiceParameterDefinition>
           <name>CLOUD</name>
           <description>The target cloud provider.</description>
-          <defaultValue>AWS</defaultValue>
-          <trim>false</trim>
-        </hudson.model.StringParameterDefinition>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>AWS</string>
+              <string>GCP</string>
+              <string>AZURE</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
         <hudson.model.StringParameterDefinition>
           <name>IMAGE_NAME</name>
           <description>Name for the Packer image (used for BUILD action).</description>
           <defaultValue>multi-cloud-image</defaultValue>
           <trim>false</trim>
         </hudson.model.StringParameterDefinition>
-        <hudson.model.StringParameterDefinition>
+        <hudson.model.ChoiceParameterDefinition>
           <name>IMAGE_TYPE</name>
           <description>Operating system type (used for BUILD action).</description>
-          <defaultValue>Linux</defaultValue>
-          <trim>false</trim>
-        </hudson.model.StringParameterDefinition>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>Linux</string>
+              <string>Windows</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
         <hudson.model.StringParameterDefinition>
           <name>IMAGE_ID</name>
           <description>The Image ID to launch (AMI ID, GCP Image Name, Azure Image ID). Required for DEPLOY action.</description>
