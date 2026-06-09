@@ -4,7 +4,8 @@ pipeline {
     parameters {
         // Connection Parameters
         string(name: 'PRIVATE_IP', defaultValue: '', description: 'Private IP of the EC2/GCP/Azure instance running MongoDB.')
-        string(name: 'BASTION_IP', defaultValue: '', description: 'Public IP of the Bastion Host.')
+        string(name: 'BASTION_IP', defaultValue: '', description: 'Public IP of the Bastion Host. (Leave empty if connecting directly).')
+        string(name: 'SSH_USER', defaultValue: 'ec2-user', description: 'SSH username for the instances (e.g., ec2-user or ubuntu).')
         choice(name: 'CLOUD', choices: ['AWS', 'GCP', 'AZURE'], description: 'Cloud provider where your SSH key is stored.')
         string(name: 'SECRET_NAME', defaultValue: '', description: 'Name of the secret containing the SSH key (e.g., prod-key-1-secret).')
         
@@ -44,8 +45,8 @@ pipeline {
         stage('Prepare Script') {
             steps {
                 script {
-                    if (params.PRIVATE_IP == '' || params.SECRET_NAME == '' || params.BASTION_IP == '') {
-                        error "PRIVATE_IP, BASTION_IP, and SECRET_NAME are required to connect to the instance."
+                    if (params.PRIVATE_IP == '' || params.SECRET_NAME == '') {
+                        error "PRIVATE_IP and SECRET_NAME are required to connect to the instance."
                     }
                     
                     // Retrieve MongoDB Credentials from AWS Secrets Manager
@@ -227,6 +228,7 @@ EOF
                                 export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
                                 export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
                                 echo "Retrieving SSH key from AWS Secrets Manager..."
+                                rm -f private_key.pem
                                 aws secretsmanager get-secret-value --secret-id ${params.SECRET_NAME} --query SecretString --output text --region ${params.AWS_REGION} > private_key.pem
                                 """
                             } else {
@@ -235,26 +237,50 @@ EOF
                                 set AWS_ACCESS_KEY_ID=%AWS_ACCESS_KEY_ID%
                                 set AWS_SECRET_ACCESS_KEY=%AWS_SECRET_ACCESS_KEY%
                                 echo Retrieving SSH key from AWS Secrets Manager...
+                                if exist private_key.pem del /F /Q private_key.pem
                                 call aws secretsmanager get-secret-value --secret-id ${params.SECRET_NAME} --query SecretString --output text --region ${params.AWS_REGION} > private_key.pem
                                 """
                             }
                         } else if (params.CLOUD == 'GCP') {
-                            bat """
-                            @echo off
-                            set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
-                            call gcloud auth activate-service-account --key-file="%GOOGLE_APPLICATION_CREDENTIALS%" --quiet
-                            echo Retrieving SSH key from GCP Secret Manager...
-                            call gcloud secrets versions access latest --secret="${params.SECRET_NAME}" --project="${params.GCP_PROJECT}" > private_key.pem
-                            """
+                            if (isUnix()) {
+                                sh """
+                                export GOOGLE_APPLICATION_CREDENTIALS="${GOOGLE_APPLICATION_CREDENTIALS}"
+                                gcloud auth activate-service-account --key-file="\${GOOGLE_APPLICATION_CREDENTIALS}" --quiet
+                                echo "Retrieving SSH key from GCP Secret Manager..."
+                                rm -f private_key.pem
+                                gcloud secrets versions access latest --secret="${params.SECRET_NAME}" --project="${params.GCP_PROJECT}" > private_key.pem
+                                """
+                            } else {
+                                bat """
+                                @echo off
+                                set GOOGLE_APPLICATION_CREDENTIALS=%GOOGLE_APPLICATION_CREDENTIALS%
+                                call gcloud auth activate-service-account --key-file="%GOOGLE_APPLICATION_CREDENTIALS%" --quiet
+                                echo Retrieving SSH key from GCP Secret Manager...
+                                if exist private_key.pem del /F /Q private_key.pem
+                                call gcloud secrets versions access latest --secret="${params.SECRET_NAME}" --project="${params.GCP_PROJECT}" > private_key.pem
+                                """
+                            }
                         } else if (params.CLOUD == 'AZURE') {
-                            bat """
-                            @echo off
-                            set ARM_CLIENT_ID=%ARM_CLIENT_ID%
-                            set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
-                            call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID} >nul 2>&1
-                            echo Retrieving SSH key from Azure Key Vault...
-                            call az keyvault secret show --vault-name ${params.AZURE_VAULT_NAME} --name ${params.SECRET_NAME} --query value -o tsv > private_key.pem
-                            """
+                            if (isUnix()) {
+                                sh """
+                                export ARM_CLIENT_ID="${ARM_CLIENT_ID}"
+                                export ARM_CLIENT_SECRET="${ARM_CLIENT_SECRET}"
+                                az login --service-principal -u \${ARM_CLIENT_ID} -p \${ARM_CLIENT_SECRET} --tenant ${params.AZURE_TENANT_ID} >/dev/null 2>&1
+                                echo "Retrieving SSH key from Azure Key Vault..."
+                                rm -f private_key.pem
+                                az keyvault secret show --vault-name ${params.AZURE_VAULT_NAME} --name ${params.SECRET_NAME} --query value -o tsv > private_key.pem
+                                """
+                            } else {
+                                bat """
+                                @echo off
+                                set ARM_CLIENT_ID=%ARM_CLIENT_ID%
+                                set ARM_CLIENT_SECRET=%ARM_CLIENT_SECRET%
+                                call az login --service-principal -u %ARM_CLIENT_ID% -p %ARM_CLIENT_SECRET% --tenant ${params.AZURE_TENANT_ID} >nul 2>&1
+                                echo Retrieving SSH key from Azure Key Vault...
+                                if exist private_key.pem del /F /Q private_key.pem
+                                call az keyvault secret show --vault-name ${params.AZURE_VAULT_NAME} --name ${params.SECRET_NAME} --query value -o tsv > private_key.pem
+                                """
+                            }
                         }
 
                         // Execute the SSH commands
@@ -263,11 +289,19 @@ EOF
                             chmod 400 private_key.pem
                             
                             echo "--------------------------------------------------"
-                            echo "Uploading operation script to instance via Bastion..."
-                            scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ubuntu@${params.BASTION_IP}" mongo_script.sh ubuntu@${params.PRIVATE_IP}:/tmp/mongo_script.sh
-                            
-                            echo "Executing MongoDB operation: ${params.MONGO_ACTION}"
-                            ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ubuntu@${params.BASTION_IP}" ubuntu@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                            if [ -n "${params.BASTION_IP}" ]; then
+                                echo "Uploading operation script to instance via Bastion..."
+                                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ${params.SSH_USER}@${params.BASTION_IP}" mongo_script.sh ${params.SSH_USER}@${params.PRIVATE_IP}:/tmp/mongo_script.sh
+                                
+                                echo "Executing MongoDB operation: ${params.MONGO_ACTION}"
+                                ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ${params.SSH_USER}@${params.BASTION_IP}" ${params.SSH_USER}@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                            else
+                                echo "Uploading operation script directly to Private IP..."
+                                scp -i private_key.pem -o StrictHostKeyChecking=no mongo_script.sh ${params.SSH_USER}@${params.PRIVATE_IP}:/tmp/mongo_script.sh
+                                
+                                echo "Executing MongoDB operation: ${params.MONGO_ACTION}"
+                                ssh -i private_key.pem -o StrictHostKeyChecking=no ${params.SSH_USER}@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                            fi
                             echo "--------------------------------------------------"
                             
                             rm -f private_key.pem mongo_script.sh
@@ -280,11 +314,19 @@ EOF
                             for /f "tokens=*" %%a in ('whoami') do icacls private_key.pem /grant:r "%%a:(R)" /Q
                             
                             echo --------------------------------------------------
-                            echo Uploading operation script to instance via Bastion...
-                            scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" mongo_script.sh ubuntu@${params.PRIVATE_IP}:/tmp/mongo_script.sh
-                            
-                            echo Executing MongoDB operation: ${params.MONGO_ACTION}
-                            ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ubuntu@${params.BASTION_IP}" ubuntu@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                            if not "${params.BASTION_IP}"=="" (
+                                echo Uploading operation script to instance via Bastion...
+                                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ${params.SSH_USER}@${params.BASTION_IP}" mongo_script.sh ${params.SSH_USER}@${params.PRIVATE_IP}:/tmp/mongo_script.sh
+                                
+                                echo Executing MongoDB operation: ${params.MONGO_ACTION}
+                                ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ${params.SSH_USER}@${params.BASTION_IP}" ${params.SSH_USER}@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                            ) else (
+                                echo Uploading operation script directly to Private IP...
+                                scp -i private_key.pem -o StrictHostKeyChecking=no mongo_script.sh ${params.SSH_USER}@${params.PRIVATE_IP}:/tmp/mongo_script.sh
+                                
+                                echo Executing MongoDB operation: ${params.MONGO_ACTION}
+                                ssh -i private_key.pem -o StrictHostKeyChecking=no ${params.SSH_USER}@${params.PRIVATE_IP} "chmod +x /tmp/mongo_script.sh && /tmp/mongo_script.sh"
+                            )
                             echo --------------------------------------------------
                             
                             :: Cleanup
