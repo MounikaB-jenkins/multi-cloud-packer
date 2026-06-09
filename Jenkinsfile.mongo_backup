@@ -37,9 +37,6 @@ pipeline {
                         env.MONGO_PASS = mongoCreds.password
                         sh "rm -f mongo_creds.json"
                         
-                        // Map the remote MongoDB port to a local Jenkins port (27018)
-                        env.LOCAL_MONGO_URI = "mongodb://${env.MONGO_USER}:${env.MONGO_PASS}@127.0.0.1:27018/?authSource=admin"
-                        
                         echo "Setting up SSH Tunnel to ${params.TARGET_PRIVATE_IP}..."
                         sh """
                         # Kill any existing stray SSH tunnel on port 27018
@@ -92,10 +89,17 @@ pipeline {
                     
                     echo "Taking full MongoDB backup with oplog to ${currentBackupPath}..."
                     sh """
+                    if ! command -v mongodump &> /dev/null; then
+                        echo "mongodump not found. Downloading MongoDB Database Tools..."
+                        curl -fsSL https://fastdl.mongodb.org/tools/db/mongodb-database-tools-amazon2-x86_64-100.9.4.tgz -o mongo-tools.tgz
+                        tar -xzf mongo-tools.tgz
+                        export PATH="\$PWD/mongodb-database-tools-amazon2-x86_64-100.9.4/bin:\$PATH"
+                    fi
+                    
                     mkdir -p "${currentBackupPath}"
                     
                     # Execute mongodump locally routing through the SSH tunnel
-                    mongodump --uri="${env.LOCAL_MONGO_URI}" --oplog --out="${currentBackupPath}"
+                    mongodump --host="127.0.0.1" --port="27018" --username="${env.MONGO_USER}" --password="${env.MONGO_PASS}" --authenticationDatabase="admin" --oplog --out="${currentBackupPath}"
                     
                     # Update the 'latest' symlink for easy future restores
                     ln -sfn "${currentBackupPath}" "${env.WORKSPACE}/${safeBackupDir}/latest"
@@ -120,13 +124,20 @@ pipeline {
                     
                     echo "Restoring MongoDB from ${targetBackupPath} with oplogReplay..."
                     sh """
+                    if ! command -v mongorestore &> /dev/null; then
+                        echo "mongorestore not found. Downloading MongoDB Database Tools..."
+                        curl -fsSL https://fastdl.mongodb.org/tools/db/mongodb-database-tools-amazon2-x86_64-100.9.4.tgz -o mongo-tools.tgz
+                        tar -xzf mongo-tools.tgz
+                        export PATH="\$PWD/mongodb-database-tools-amazon2-x86_64-100.9.4/bin:\$PATH"
+                    fi
+                    
                     if [ ! -d "${targetBackupPath}" ]; then
                         echo "ERROR: Backup directory ${targetBackupPath} not found!"
                         exit 1
                     fi
                     
                     # Execute mongorestore locally routing through the SSH tunnel
-                    mongorestore --uri="${env.LOCAL_MONGO_URI}" --oplogReplay ${dropFlag} "${targetBackupPath}"
+                    mongorestore --host="127.0.0.1" --port="27018" --username="${env.MONGO_USER}" --password="${env.MONGO_PASS}" --authenticationDatabase="admin" --oplogReplay ${dropFlag} "${targetBackupPath}"
                     """
                     echo "Restore successful!"
                 }
