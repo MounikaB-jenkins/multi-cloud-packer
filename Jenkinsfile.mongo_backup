@@ -46,11 +46,31 @@ pipeline {
                         pkill -f "27018:127.0.0.1:27017" || true
                         
                         if [ -n "${params.BASTION_IP}" ]; then
-                            echo "Tunneling via Bastion (${params.BASTION_IP})..."
-                            ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ${params.SSH_USER}@${params.BASTION_IP}" ${params.SSH_USER}@${params.TARGET_PRIVATE_IP}
+                            echo "Determining SSH user for Bastion (${params.BASTION_IP}) and Target (${params.TARGET_PRIVATE_IP})..."
+                            if ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@${params.BASTION_IP}" ubuntu@${params.TARGET_PRIVATE_IP} "echo OK" >/dev/null 2>&1; then
+                                TARGET_USER="ubuntu"
+                                BASTION_USER="ec2-user"
+                            elif ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@${params.BASTION_IP}" ec2-user@${params.TARGET_PRIVATE_IP} "echo OK" >/dev/null 2>&1; then
+                                TARGET_USER="ec2-user"
+                                BASTION_USER="ec2-user"
+                            else
+                                echo "ERROR: Failed to connect via Bastion. Check your SSH Key or IPs."
+                                exit 1
+                            fi
+                            echo "Tunneling via Bastion as \$BASTION_USER to target as \$TARGET_USER..."
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" \$TARGET_USER@${params.TARGET_PRIVATE_IP}
                         else
-                            echo "Tunneling directly to Private IP (${params.TARGET_PRIVATE_IP})..."
-                            ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 ${params.SSH_USER}@${params.TARGET_PRIVATE_IP}
+                            echo "Determining SSH user for Target (${params.TARGET_PRIVATE_IP})..."
+                            if ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes ubuntu@${params.TARGET_PRIVATE_IP} "echo OK" >/dev/null 2>&1; then
+                                TARGET_USER="ubuntu"
+                            elif ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes ec2-user@${params.TARGET_PRIVATE_IP} "echo OK" >/dev/null 2>&1; then
+                                TARGET_USER="ec2-user"
+                            else
+                                echo "ERROR: Failed to connect to Target. Check your SSH Key or IP."
+                                exit 1
+                            fi
+                            echo "Tunneling directly to Private IP as \$TARGET_USER..."
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 \$TARGET_USER@${params.TARGET_PRIVATE_IP}
                         fi
                         
                         echo "Waiting 5 seconds for tunnel to establish..."
