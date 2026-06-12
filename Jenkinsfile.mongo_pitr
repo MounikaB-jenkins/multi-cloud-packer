@@ -1,0 +1,184 @@
+pipeline {
+    agent any
+
+    parameters {
+        choice(name: 'ACTION', choices: ['FULL_BACKUP', 'OPLOG_BACKUP', 'PITR_RESTORE'], description: 'Action: Take a base full backup, an incremental oplog backup, or restore to a specific point in time.')
+        string(name: 'S3_BUCKET_NAME', defaultValue: 'my-company-mongo-pitr-backups', description: 'AWS S3 Bucket name for storing continuous backups.')
+        string(name: 'TARGET_PRIVATE_IP', defaultValue: '', description: 'Private IP of the MongoDB instance.')
+        string(name: 'BASTION_IP', defaultValue: '', description: 'Public IP of the Bastion Host (Leave empty if Jenkins can reach the Private IP directly).')
+        string(name: 'SECRET_NAME', defaultValue: '', description: 'Name of the AWS secret containing the SSH key.')
+        string(name: 'MONGO_CREDENTIALS_SECRET', defaultValue: 'mongodb-creds', description: 'AWS Secret name containing MongoDB credentials.')
+        string(name: 'AWS_REGION', defaultValue: 'us-east-1', description: 'AWS region for the secrets and S3 bucket.')
+        
+        string(name: 'FULL_BACKUP_FILE', defaultValue: '', description: 'For RESTORE: The tar.gz filename of the full base backup in S3 (e.g., full_backup_2026-06-09.tar.gz).')
+        string(name: 'RESTORE_TIMESTAMP', defaultValue: '', description: 'For RESTORE: Unix epoch timestamp for Point-In-Time limit (e.g., 1718180000). Leave empty to restore fully.')
+    }
+
+    stages {
+        stage('Setup SSH Tunnel') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    script {
+                        echo "Retrieving SSH key and MongoDB credentials from Secrets Manager..."
+                        sh """
+                        export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                        export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                        export AWS_DEFAULT_REGION=${params.AWS_REGION}
+                        
+                        rm -f private_key.pem mongo_creds.json
+                        aws secretsmanager get-secret-value --secret-id ${params.SECRET_NAME} --query SecretString --output text > private_key.pem
+                        chmod 400 private_key.pem
+                        
+                        aws secretsmanager get-secret-value --secret-id ${params.MONGO_CREDENTIALS_SECRET} --query SecretString --output text > mongo_creds.json
+                        """
+                        
+                        def mongoCreds = readJSON file: 'mongo_creds.json'
+                        env.MONGO_USER = mongoCreds.username
+                        env.MONGO_PASS = mongoCreds.password
+                        sh "rm -f mongo_creds.json"
+                        
+                        sh """
+                        # Kill any existing stray SSH tunnel on port 27018
+                        pkill -f "27018:127.0.0.1:27017" || true
+                        
+                        if [ -n "${params.BASTION_IP}" ]; then
+                            echo "Determining SSH user for Bastion (${params.BASTION_IP}) and Target (${params.TARGET_PRIVATE_IP})..."
+                            if ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@${params.BASTION_IP}" ubuntu@${params.TARGET_PRIVATE_IP} "echo OK" >/dev/null 2>&1; then
+                                TARGET_USER="ubuntu"
+                                BASTION_USER="ec2-user"
+                            elif ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@${params.BASTION_IP}" ec2-user@${params.TARGET_PRIVATE_IP} "echo OK" >/dev/null 2>&1; then
+                                TARGET_USER="ec2-user"
+                                BASTION_USER="ec2-user"
+                            else
+                                echo "ERROR: Failed to connect via Bastion. Check your SSH Key or IPs."
+                                exit 1
+                            fi
+                            echo "Tunneling via Bastion as \$BASTION_USER to target as \$TARGET_USER..."
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" \$TARGET_USER@${params.TARGET_PRIVATE_IP}
+                        else
+                            echo "Determining SSH user for Target (${params.TARGET_PRIVATE_IP})..."
+                            if ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes ubuntu@${params.TARGET_PRIVATE_IP} "echo OK" >/dev/null 2>&1; then
+                                TARGET_USER="ubuntu"
+                            elif ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes ec2-user@${params.TARGET_PRIVATE_IP} "echo OK" >/dev/null 2>&1; then
+                                TARGET_USER="ec2-user"
+                            else
+                                echo "ERROR: Failed to connect to Target. Check your SSH Key or IP."
+                                exit 1
+                            fi
+                            echo "Tunneling directly to Private IP as \$TARGET_USER..."
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 \$TARGET_USER@${params.TARGET_PRIVATE_IP}
+                        fi
+                        
+                        echo "Waiting 5 seconds for tunnel to establish..."
+                        sleep 5
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Ensure S3 Bucket') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    sh """
+                    export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                    export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                    export AWS_DEFAULT_REGION=${params.AWS_REGION}
+                    
+                    if ! aws s3api head-bucket --bucket "${params.S3_BUCKET_NAME}" 2>/dev/null; then
+                        echo "Creating S3 bucket ${params.S3_BUCKET_NAME} for PITR backups..."
+                        aws s3 mb "s3://${params.S3_BUCKET_NAME}" --region "${params.AWS_REGION}"
+                    fi
+                    """
+                }
+            }
+        }
+
+        stage('Execute Database Operations') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    sh """
+                    export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                    export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                    export AWS_DEFAULT_REGION=${params.AWS_REGION}
+                    
+                    # Ensure MongoDB Tools are available locally
+                    if ! command -v mongodump &> /dev/null; then
+                        echo "MongoDB Tools not found. Downloading..."
+                        curl -fsSL https://fastdl.mongodb.org/tools/db/mongodb-database-tools-amazon2-x86_64-100.9.4.tgz -o mongo-tools.tgz
+                        tar -xzf mongo-tools.tgz
+                        export PATH="\$PWD/mongodb-database-tools-amazon2-x86_64-100.9.4/bin:\$PATH"
+                    fi
+                    
+                    TIMESTAMP=\$(date +'%Y-%m-%d_%H-%M-%S')
+                    
+                    if [ "${params.ACTION}" = "FULL_BACKUP" ]; then
+                        echo "=== Taking Base FULL BACKUP ==="
+                        mkdir -p "dump"
+                        mongodump --host="127.0.0.1" --port="27018" --username="${env.MONGO_USER}" --password="${env.MONGO_PASS}" --authenticationDatabase="admin" --oplog --out="dump"
+                        
+                        tar -czf full_backup_\${TIMESTAMP}.tar.gz dump/
+                        aws s3 cp full_backup_\${TIMESTAMP}.tar.gz "s3://${params.S3_BUCKET_NAME}/full-backups/"
+                        echo "Base Backup uploaded successfully."
+                        
+                    elif [ "${params.ACTION}" = "OPLOG_BACKUP" ]; then
+                        echo "=== Taking Incremental OPLOG BACKUP ==="
+                        mkdir -p "oplog_dump"
+                        mongodump --host="127.0.0.1" --port="27018" --username="${env.MONGO_USER}" --password="${env.MONGO_PASS}" --authenticationDatabase="admin" -d local -c oplog.rs --out="oplog_dump"
+                        
+                        tar -czf oplog_backup_\${TIMESTAMP}.tar.gz oplog_dump/
+                        aws s3 cp oplog_backup_\${TIMESTAMP}.tar.gz "s3://${params.S3_BUCKET_NAME}/oplog-backups/"
+                        echo "Oplog Archive uploaded successfully."
+                        
+                    elif [ "${params.ACTION}" = "PITR_RESTORE" ]; then
+                        echo "=== Performing POINT-IN-TIME RECOVERY ==="
+                        if [ -z "${params.FULL_BACKUP_FILE}" ]; then
+                            echo "ERROR: FULL_BACKUP_FILE parameter is required for PITR_RESTORE."
+                            exit 1
+                        fi
+                        
+                        echo "Downloading Base Backup..."
+                        aws s3 cp "s3://${params.S3_BUCKET_NAME}/full-backups/${params.FULL_BACKUP_FILE}" .
+                        tar -xzf "${params.FULL_BACKUP_FILE}"
+                        
+                        if [ -n "${params.RESTORE_TIMESTAMP}" ]; then
+                            echo "Downloading Continuous Oplog Archives..."
+                            mkdir -p downloaded_oplogs
+                            aws s3 cp "s3://${params.S3_BUCKET_NAME}/oplog-backups/" downloaded_oplogs/ --recursive
+                            
+                            echo "Merging incremental oplogs into base oplog.bson..."
+                            for file in downloaded_oplogs/*.tar.gz; do
+                                if [ -f "\$file" ]; then
+                                    tar -xzf "\$file" -C downloaded_oplogs/
+                                    # BSON files are streamable. Appending the operations merges them.
+                                    cat downloaded_oplogs/oplog_dump/local/oplog.rs.bson >> dump/oplog.bson
+                                fi
+                            done
+                            
+                            echo "Replaying merged oplogs up to timestamp: ${params.RESTORE_TIMESTAMP}..."
+                            mongorestore --host="127.0.0.1" --port="27018" --username="${env.MONGO_USER}" --password="${env.MONGO_PASS}" --authenticationDatabase="admin" --oplogReplay --oplogLimit "${params.RESTORE_TIMESTAMP}" --drop dump/
+                        else
+                            echo "No RESTORE_TIMESTAMP provided. Performing full base restore..."
+                            mongorestore --host="127.0.0.1" --port="27018" --username="${env.MONGO_USER}" --password="${env.MONGO_PASS}" --authenticationDatabase="admin" --oplogReplay --drop dump/
+                        fi
+                        
+                        echo "Point-In-Time Recovery completed successfully!"
+                    fi
+                    """
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            sh """
+            pkill -f "27018:127.0.0.1:27017" || true
+            rm -f private_key.pem
+            rm -rf dump/ oplog_dump/ downloaded_oplogs/
+            rm -f *.tar.gz mongo-tools.tgz
+            rm -rf mongodb-database-tools-*
+            """
+        }
+    }
+}

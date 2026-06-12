@@ -1,0 +1,83 @@
+<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job@1306.v9a9cd34d1ed2">
+  <actions/>
+  <description>Mongodbserver_PITR: Point-In-Time Recovery Backup System via AWS S3</description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <hudson.model.ParametersDefinitionProperty>
+      <parameterDefinitions>
+        <hudson.model.ChoiceParameterDefinition>
+          <name>ACTION</name>
+          <description>Action: Take a base full backup, an incremental oplog backup, or restore to a specific point in time.</description>
+          <choices class="java.util.Arrays$ArrayList">
+            <a class="string-array">
+              <string>FULL_BACKUP</string>
+              <string>OPLOG_BACKUP</string>
+              <string>PITR_RESTORE</string>
+            </a>
+          </choices>
+        </hudson.model.ChoiceParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>S3_BUCKET_NAME</name>
+          <description>AWS S3 Bucket name for storing continuous backups.</description>
+          <defaultValue>my-company-mongo-pitr-backups</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>TARGET_PRIVATE_IP</name>
+          <description>Private IP of the MongoDB instance.</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>BASTION_IP</name>
+          <description>Public IP of the Bastion Host (Leave empty if Jenkins can reach the Private IP directly).</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>SECRET_NAME</name>
+          <description>Name of the AWS secret containing the SSH key.</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>MONGO_CREDENTIALS_SECRET</name>
+          <description>AWS Secret name containing MongoDB credentials.</description>
+          <defaultValue>mongodb-creds</defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>FULL_BACKUP_FILE</name>
+          <description>For RESTORE: The tar.gz filename of the full base backup in S3 (e.g., full_backup_2026-06-09.tar.gz).</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+        <hudson.model.StringParameterDefinition>
+          <name>RESTORE_TIMESTAMP</name>
+          <description>For RESTORE: Unix epoch timestamp for Point-In-Time limit (e.g., 1718180000). Leave empty to restore fully.</description>
+          <defaultValue></defaultValue>
+          <trim>false</trim>
+        </hudson.model.StringParameterDefinition>
+      </parameterDefinitions>
+    </hudson.model.ParametersDefinitionProperty>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps@2.97">
+    <scm class="hudson.plugins.git.GitSCM" plugin="git@5.2.2">
+      <configVersion>2</configVersion>
+      <userRemoteConfigs>
+        <hudson.plugins.git.UserRemoteConfig>
+          <url>https://github.com/MounikaB-jenkins/multi-cloud-packer.git</url>
+          <credentialsId>github-token</credentialsId>
+        </hudson.plugins.git.UserRemoteConfig>
+      </userRemoteConfigs>
+      <branches>
+        <hudson.plugins.git.BranchSpec>
+          <name>*/develop</name>
+        </hudson.plugins.git.BranchSpec>
+      </branches>
+    </scm>
+    <scriptPath>Jenkinsfile.mongo_pitr</scriptPath>
+    <lightweight>false</lightweight>
+  </definition>
+</flow-definition>
