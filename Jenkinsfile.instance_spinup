@@ -263,9 +263,15 @@ iptables -t nat -A POSTROUTING -j MASQUERADE
                 BASTION_ID=""
 
                 if [ -z "\$ACTIVE_BASTION_IP" ]; then
-                    BASTION_ID=\$(aws ec2 describe-instances --filters "Name=tag:Name,Values=bastion-host" "Name=instance-state-name,Values=running" "Name=vpc-id,Values=\$VPC_ID" --query "Reservations[0].Instances[0].InstanceId" --output text 2>/dev/null || echo "")
+                    BASTION_ID=\$(aws ec2 describe-instances --filters "Name=tag:Name,Values=bastion-host" "Name=instance-state-name,Values=running" "Name=vpc-id,Values=\$VPC_ID" "Name=key-name,Values=\$KEY_NAME" --query "Reservations[0].Instances[0].InstanceId" --output text 2>/dev/null || echo "")
                     if [ -z "\$BASTION_ID" ] || [ "\$BASTION_ID" == "None" ]; then
-                        echo "Bastion host not found. Provisioning a new Bastion Host in public subnet \$PUBLIC_SUBNET_ID as a NAT instance..."
+                        OLD_BASTION=\$(aws ec2 describe-instances --filters "Name=tag:Name,Values=bastion-host" "Name=instance-state-name,Values=running" "Name=vpc-id,Values=\$VPC_ID" --query "Reservations[0].Instances[0].InstanceId" --output text 2>/dev/null || echo "")
+                        if [ -n "\$OLD_BASTION" ] && [ "\$OLD_BASTION" != "None" ]; then
+                            echo "Terminating old Bastion Host (\$OLD_BASTION) due to mismatched SSH key..."
+                            aws ec2 terminate-instances --instance-ids "\$OLD_BASTION" >/dev/null
+                        fi
+                        
+                        echo "Bastion host not found for key \$KEY_NAME. Provisioning a new Bastion Host in public subnet \$PUBLIC_SUBNET_ID as a NAT instance..."
                         AL2023_AMI=\$(aws ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-2023.*-x86_64" "Name=state,Values=available" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text)
                         BASTION_ID=\$(aws ec2 run-instances --image-id "\$AL2023_AMI" --instance-type t3.micro --security-group-ids "\$SG_ID" --key-name "\$KEY_NAME" --subnet-id "\$PUBLIC_SUBNET_ID" --associate-public-ip-address --user-data file://bastion_userdata.sh --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=bastion-host}]' --query "Instances[0].InstanceId" --output text)
                         aws ec2 wait instance-running --instance-ids "\$BASTION_ID"
@@ -435,10 +441,16 @@ iptables -t nat -A POSTROUTING -j MASQUERADE
             set "BASTION_ID="
 
             if "!ACTIVE_BASTION_IP!"=="" (
-                for /f "tokens=*" %%i in ('call aws ec2 describe-instances --filters "Name=tag:Name,Values=bastion-host" "Name=instance-state-name,Values=running" "Name=vpc-id,Values=!VPC_ID!" --query "Reservations[0].Instances[0].InstanceId" --output text 2^>nul') do set "BASTION_ID=%%i"
+                for /f "tokens=*" %%i in ('call aws ec2 describe-instances --filters "Name=tag:Name,Values=bastion-host" "Name=instance-state-name,Values=running" "Name=vpc-id,Values=!VPC_ID!" "Name=key-name,Values=!KEY_NAME!" --query "Reservations[0].Instances[0].InstanceId" --output text 2^>nul') do set "BASTION_ID=%%i"
                 if "!BASTION_ID!"=="" set "BASTION_ID=None"
                 if "!BASTION_ID!"=="None" (
-                    echo Bastion host not found. Provisioning a new Bastion Host in public subnet !PUBLIC_SUBNET_ID! as a NAT instance...
+                    for /f "tokens=*" %%i in ('call aws ec2 describe-instances --filters "Name=tag:Name,Values=bastion-host" "Name=instance-state-name,Values=running" "Name=vpc-id,Values=!VPC_ID!" --query "Reservations[0].Instances[0].InstanceId" --output text 2^>nul') do set "OLD_BASTION=%%i"
+                    if not "!OLD_BASTION!"=="" if not "!OLD_BASTION!"=="None" (
+                        echo Terminating old Bastion Host ^(!OLD_BASTION!^) due to mismatched SSH key...
+                        call aws ec2 terminate-instances --instance-ids "!OLD_BASTION!" >nul
+                    )
+                    
+                    echo Bastion host not found for key !KEY_NAME!. Provisioning a new Bastion Host in public subnet !PUBLIC_SUBNET_ID! as a NAT instance...
                     for /f "tokens=*" %%i in ('call aws ec2 describe-images --owners amazon --filters "Name=name,Values=al2023-ami-2023.*-x86_64" "Name=state,Values=available" --query "sort_by(Images, &CreationDate)[-1].ImageId" --output text') do set "AL2023_AMI=%%i"
                     for /f "tokens=*" %%i in ('call aws ec2 run-instances --image-id "!AL2023_AMI!" --instance-type t3.micro --security-group-ids "!SG_ID!" --key-name "!KEY_NAME!" --subnet-id "!PUBLIC_SUBNET_ID!" --associate-public-ip-address --user-data file://bastion_userdata.sh --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=bastion-host}]" --query "Instances[0].InstanceId" --output text') do set "BASTION_ID=%%i"
                     call aws ec2 wait instance-running --instance-ids "!BASTION_ID!"
