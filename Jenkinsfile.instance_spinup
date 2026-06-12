@@ -148,6 +148,9 @@ else
     exit 1
 fi
 
+echo "Configuring MongoDB to listen on all interfaces..."
+sudo sed -i 's/bindIp: 127.0.0.1/bindIp: 0.0.0.0/' /etc/mongod.conf
+
 sudo systemctl start mongod
 sudo systemctl enable mongod
 
@@ -249,6 +252,7 @@ iptables -t nat -A POSTROUTING -j MASQUERADE
                 aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol tcp --port 22 --cidr 0.0.0.0/0 2>/dev/null || true
                 aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0 2>/dev/null || true
                 aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol icmp --port -1 --cidr 0.0.0.0/0 2>/dev/null || true
+                aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol tcp --port 27017 --cidr 0.0.0.0/0 2>/dev/null || true
 
                 VPC_CIDR=\$(aws ec2 describe-vpcs --vpc-ids "\$VPC_ID" --query "Vpcs[0].CidrBlock" --output text)
                 aws ec2 authorize-security-group-ingress --group-id "\$SG_ID" --protocol all --cidr "\$VPC_CIDR" 2>/dev/null || true
@@ -420,6 +424,7 @@ iptables -t nat -A POSTROUTING -j MASQUERADE
             call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 22 --cidr 0.0.0.0/0 2>nul
             call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 80 --cidr 0.0.0.0/0 2>nul
             call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol icmp --port -1 --cidr 0.0.0.0/0 2>nul
+            call aws ec2 authorize-security-group-ingress --group-id !SG_ID! --protocol tcp --port 27017 --cidr 0.0.0.0/0 2>nul
 
             for /f "tokens=*" %%c in ('call aws ec2 describe-vpcs --vpc-ids "!VPC_ID!" --query "Vpcs[0].CidrBlock" --output text') do set "VPC_CIDR=%%c"
             call aws ec2 authorize-security-group-ingress --group-id "!SG_ID!" --protocol all --cidr "!VPC_CIDR!" 2>nul
@@ -541,7 +546,7 @@ iptables -t nat -A POSTROUTING -j MASQUERADE
                 sh """
                 #!/bin/bash
                 INSTANCE_NAME="prod-vm-${BUILD_NUMBER}"
-                ${env.GCLOUD_EXE} compute firewall-rules create allow-ssh-http-icmp --allow tcp:22,tcp:80,icmp --target-tags=prod-web --project=${params.GCP_PROJECT} 2>/dev/null || true
+                ${env.GCLOUD_EXE} compute firewall-rules create allow-ssh-http-icmp-mongo --allow tcp:22,tcp:80,tcp:27017,icmp --target-tags=prod-web --project=${params.GCP_PROJECT} 2>/dev/null || true
                 
                 ${env.GCLOUD_EXE} compute instances create \${INSTANCE_NAME} \\
                     --image=${params.IMAGE_ID} \\
@@ -589,7 +594,7 @@ iptables -t nat -A POSTROUTING -j MASQUERADE
             
             :: 1. Firewall Rules
             echo Ensuring Firewall Rules...
-            call "!GCLOUD_EXE!" compute firewall-rules create allow-ssh-http-icmp --allow tcp:22,tcp:80,icmp --target-tags=prod-web --project=${params.GCP_PROJECT} 2>nul
+            call "!GCLOUD_EXE!" compute firewall-rules create allow-ssh-http-icmp-mongo --allow tcp:22,tcp:80,tcp:27017,icmp --target-tags=prod-web --project=${params.GCP_PROJECT} 2>nul
             
             :: 2. Launch
             echo Launching GCP Instance...
@@ -684,6 +689,7 @@ iptables -t nat -A POSTROUTING -j MASQUERADE
                 fi
                 
                 ${env.AZ_EXE} vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name \${VM_NAME} --port 80
+                ${env.AZ_EXE} vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name \${VM_NAME} --port 27017
                 """
             } else {
             bat """
@@ -769,6 +775,7 @@ iptables -t nat -A POSTROUTING -j MASQUERADE
             :: 2. Open Port 80
             echo Opening Port 80...
             call "!AZ_EXE!" vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name %VM_NAME% --port 80
+            call "!AZ_EXE!" vm open-port --resource-group ${params.AZURE_RESOURCE_GROUP} --name %VM_NAME% --port 27017
             """
             }
             // Extract IP from JSON
