@@ -129,8 +129,19 @@ def deployInstance() {
             echo "Warning: Secret is not valid JSON. Treating the entire secret string as the password."
         }
 
-        def mongoUserB64 = mongoUser.bytes.encodeBase64().toString()
-        def mongoPassB64 = mongoPass.bytes.encodeBase64().toString()
+        writeFile file: 'tmp_user.txt', text: mongoUser
+        writeFile file: 'tmp_pass.txt', text: mongoPass
+        def mongoUserB64 = ""
+        def mongoPassB64 = ""
+        if (isUnix()) {
+            mongoUserB64 = sh(script: "cat tmp_user.txt | base64 | tr -d '\\n'", returnStdout: true).trim()
+            mongoPassB64 = sh(script: "cat tmp_pass.txt | base64 | tr -d '\\n'", returnStdout: true).trim()
+            sh "rm -f tmp_user.txt tmp_pass.txt"
+        } else {
+            mongoUserB64 = bat(script: "@powershell -NoProfile -Command \"[Convert]::ToBase64String([IO.File]::ReadAllBytes('tmp_user.txt'))\"", returnStdout: true).trim()
+            mongoPassB64 = bat(script: "@powershell -NoProfile -Command \"[Convert]::ToBase64String([IO.File]::ReadAllBytes('tmp_pass.txt'))\"", returnStdout: true).trim()
+            bat "del tmp_user.txt tmp_pass.txt"
+        }
 
         writeFile file: 'setup_mongo.sh', text: """#!/bin/bash
 export MONGO_USER=\$(echo "${mongoUserB64}" | base64 -d 2>/dev/null || echo "${mongoUserB64}" | base64 --decode)
