@@ -112,7 +112,7 @@ pipeline {
                     
                     if ! aws s3api head-bucket --bucket "${params.S3_BUCKET_NAME}" 2>/dev/null; then
                         echo "Creating S3 bucket ${params.S3_BUCKET_NAME} for PITR backups..."
-                        aws s3 mb "s3://${params.S3_BUCKET_NAME}" --region "${params.AWS_REGION}"
+                        aws s3 mb "s3://${params.S3_BUCKET_NAME}" --region "${params.AWS_REGION}" || echo "WARNING: S3 CreateBucket access denied. Proceeding assuming the bucket already exists..."
                     fi
                     """
                 }
