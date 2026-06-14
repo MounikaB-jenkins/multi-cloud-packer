@@ -192,14 +192,18 @@ for i in {1..30}; do
 done
 
 echo "Creating admin user..."
-cat << 'EOF' > create_user.js
-db.createUser({ user: process.env.MONGO_USER, pwd: process.env.MONGO_PASS, roles: [{role: "root", db: "admin"}] })
+cat << EOF > create_user.js
+const user = Buffer.from("${mongoUserB64}", 'base64').toString('utf8');
+const pass = Buffer.from("${mongoPassB64}", 'base64').toString('utf8');
+db.createUser({ user: user, pwd: pass, roles: [{role: "root", db: "admin"}] });
 EOF
-mongosh admin create_user.js >/dev/null 2>&1 || true
+mongosh admin create_user.js || echo "User creation failed (may already exist or authentication is already enabled)."
 rm -f create_user.js
 
 echo "Enabling authentication..."
-sudo sed -i 's/^#security:/security:\\n  authorization: enabled/' /etc/mongod.conf
+if ! grep -q '^security:' /etc/mongod.conf; then
+    echo -e '\\nsecurity:\\n  authorization: enabled' | sudo tee -a /etc/mongod.conf
+fi
 
 sudo systemctl restart mongod
 echo "Waiting for MongoDB to restart with auth..."
