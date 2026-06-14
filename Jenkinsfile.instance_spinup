@@ -129,17 +129,17 @@ def deployInstance() {
             echo "Warning: Secret is not valid JSON. Treating the entire secret string as the password."
         }
 
-        writeFile file: 'tmp_user.txt', text: mongoUser
-        writeFile file: 'tmp_pass.txt', text: mongoPass
+        writeFile file: 'tmp_user.txt', text: mongoUser.trim()
+        writeFile file: 'tmp_pass.txt', text: mongoPass.trim()
         def mongoUserB64 = ""
         def mongoPassB64 = ""
         if (isUnix()) {
-            mongoUserB64 = sh(script: "cat tmp_user.txt | base64 | tr -d '\\n'", returnStdout: true).trim()
-            mongoPassB64 = sh(script: "cat tmp_pass.txt | base64 | tr -d '\\n'", returnStdout: true).trim()
+            mongoUserB64 = sh(script: "tr -d '\\r\\n' < tmp_user.txt | base64 | tr -d '\\r\\n'", returnStdout: true).trim()
+            mongoPassB64 = sh(script: "tr -d '\\r\\n' < tmp_pass.txt | base64 | tr -d '\\r\\n'", returnStdout: true).trim()
             sh "rm -f tmp_user.txt tmp_pass.txt"
         } else {
-            mongoUserB64 = bat(script: "@powershell -NoProfile -Command \"[Convert]::ToBase64String([IO.File]::ReadAllBytes('tmp_user.txt'))\"", returnStdout: true).trim()
-            mongoPassB64 = bat(script: "@powershell -NoProfile -Command \"[Convert]::ToBase64String([IO.File]::ReadAllBytes('tmp_pass.txt'))\"", returnStdout: true).trim()
+            mongoUserB64 = bat(script: "@powershell -NoProfile -Command \"[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((Get-Content -Path 'tmp_user.txt' -Raw).Trim()))\"", returnStdout: true).trim()
+            mongoPassB64 = bat(script: "@powershell -NoProfile -Command \"[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((Get-Content -Path 'tmp_pass.txt' -Raw).Trim()))\"", returnStdout: true).trim()
             bat "del tmp_user.txt tmp_pass.txt"
         }
 
@@ -380,15 +380,33 @@ iptables -t nat -A POSTROUTING -j MASQUERADE
                 sleep 60
                 
                 if [ -n "\$ACTIVE_BASTION_IP" ]; then
-                    echo "Uploading and executing MongoDB setup script via Bastion (\$ACTIVE_BASTION_IP)..."
-                    scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" setup_mongo.sh ubuntu@\$PRIVATE_IP:/tmp/setup_mongo.sh || \
-                    scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" setup_mongo.sh ec2-user@\$PRIVATE_IP:/tmp/setup_mongo.sh
-                    ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" ubuntu@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh" || \
-                    ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" ec2-user@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                    echo "Determining SSH user for Bastion (\$ACTIVE_BASTION_IP) and Target (\$PRIVATE_IP)..."
+                    if ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" ubuntu@\$PRIVATE_IP "echo OK" >/dev/null 2>&1; then
+                        TARGET_USER="ubuntu"
+                        BASTION_USER="ec2-user"
+                    elif ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p ec2-user@\$ACTIVE_BASTION_IP" ec2-user@\$PRIVATE_IP "echo OK" >/dev/null 2>&1; then
+                        TARGET_USER="ec2-user"
+                        BASTION_USER="ec2-user"
+                    else
+                        echo "ERROR: Failed to connect via Bastion. The SSH Key may be invalid for this Bastion IP."
+                        exit 1
+                    fi
+                    echo "Uploading and executing MongoDB setup script via Bastion (\$ACTIVE_BASTION_IP) as \$TARGET_USER..."
+                    scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@\$ACTIVE_BASTION_IP" setup_mongo.sh \$TARGET_USER@\$PRIVATE_IP:/tmp/setup_mongo.sh
+                    ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@\$ACTIVE_BASTION_IP" \$TARGET_USER@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
                 else
-                    echo "Uploading and executing MongoDB setup script directly..."
-                    scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ubuntu@\$PRIVATE_IP:/tmp/setup_mongo.sh || scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ec2-user@\$PRIVATE_IP:/tmp/setup_mongo.sh
-                    ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh" || ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                    echo "Determining SSH user for Target (\$PRIVATE_IP)..."
+                    if ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes ubuntu@\$PRIVATE_IP "echo OK" >/dev/null 2>&1; then
+                        TARGET_USER="ubuntu"
+                    elif ssh -i private_key.pem -o StrictHostKeyChecking=no -o BatchMode=yes ec2-user@\$PRIVATE_IP "echo OK" >/dev/null 2>&1; then
+                        TARGET_USER="ec2-user"
+                    else
+                        echo "ERROR: Failed to connect directly. The SSH Key may be invalid."
+                        exit 1
+                    fi
+                    echo "Uploading and executing MongoDB setup script directly as \$TARGET_USER..."
+                    scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh \$TARGET_USER@\$PRIVATE_IP:/tmp/setup_mongo.sh
+                    ssh -i private_key.pem -o StrictHostKeyChecking=no \$TARGET_USER@\$PRIVATE_IP "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
                 fi
                 
                 rm -f private_key.pem
@@ -575,12 +593,36 @@ iptables -t nat -A POSTROUTING -j MASQUERADE
             
             if not "!ACTIVE_BASTION_IP!"=="" (
                 echo Uploading and executing MongoDB setup script via Bastion (!ACTIVE_BASTION_IP!)...
-                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" setup_mongo.sh ubuntu@!PRIVATE_IP!:/tmp/setup_mongo.sh || scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" setup_mongo.sh ec2-user@!PRIVATE_IP!:/tmp/setup_mongo.sh
-                ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" ubuntu@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh" || ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" ec2-user@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" setup_mongo.sh ubuntu@!PRIVATE_IP!:/tmp/setup_mongo.sh >nul 2>&1
+                if !ERRORLEVEL! equ 0 (
+                    echo Executing MongoDB operation: setup_mongo.sh as ubuntu
+                    ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" ubuntu@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                ) else (
+                    scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" setup_mongo.sh ec2-user@!PRIVATE_IP!:/tmp/setup_mongo.sh >nul 2>&1
+                    if !ERRORLEVEL! equ 0 (
+                        echo Executing MongoDB operation: setup_mongo.sh as ec2-user
+                        ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %%h:%%p ec2-user@!ACTIVE_BASTION_IP!" ec2-user@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                    ) else (
+                        echo ERROR: Failed to connect via Bastion.
+                        exit /b 1
+                    )
+                )
             ) else (
                 echo Uploading and executing MongoDB setup script directly...
-                scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ubuntu@!PRIVATE_IP!:/tmp/setup_mongo.sh || scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ec2-user@!PRIVATE_IP!:/tmp/setup_mongo.sh
-                ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh" || ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ubuntu@!PRIVATE_IP!:/tmp/setup_mongo.sh >nul 2>&1
+                if !ERRORLEVEL! equ 0 (
+                    echo Executing MongoDB operation: setup_mongo.sh as ubuntu
+                    ssh -i private_key.pem -o StrictHostKeyChecking=no ubuntu@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                ) else (
+                    scp -i private_key.pem -o StrictHostKeyChecking=no setup_mongo.sh ec2-user@!PRIVATE_IP!:/tmp/setup_mongo.sh >nul 2>&1
+                    if !ERRORLEVEL! equ 0 (
+                        echo Executing MongoDB operation: setup_mongo.sh as ec2-user
+                        ssh -i private_key.pem -o StrictHostKeyChecking=no ec2-user@!PRIVATE_IP! "chmod +x /tmp/setup_mongo.sh && /tmp/setup_mongo.sh"
+                    ) else (
+                        echo ERROR: Failed to connect to Target.
+                        exit /b 1
+                    )
+                )
             )
 
             :: Cleanup local key
