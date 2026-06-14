@@ -83,31 +83,27 @@ if grep -q 'authorization: enabled' /etc/mongod.conf && ! grep -q 'keyFile' /etc
             sudo chown mongod:mongod /etc/mongo-keyfile
         fi
         sudo perl -pi -e 's/^security:/security:\\n  keyFile: \\/etc\\/mongo-keyfile/g' /etc/mongod.conf
-    RESTART_NEEDED=true
 fi
 
 if ! grep -q 'replSetName' /etc/mongod.conf; then
     echo 'Configuring Replica Set in /etc/mongod.conf...'
     echo -e '\\nreplication:\\n  replSetName: "rs0"' | sudo tee -a /etc/mongod.conf
-    RESTART_NEEDED=true
 fi
 
-if [ "\$RESTART_NEEDED" = "true" ]; then
-    sudo systemctl restart mongod
-        echo "Waiting for MongoDB to restart with Replica Set config..."
-        for i in {1..30}; do
-            if mongosh admin -u "\$MONGO_USER" -p "\$MONGO_PASS" --eval "db.adminCommand({ping: 1})" --quiet >/dev/null 2>&1; then
-                break
-            fi
-            if [ \$i -eq 30 ]; then
-                echo "ERROR: Timeout waiting for MongoDB to start!"
-                echo "--- MONGOD LOGS ---"
-                sudo tail -n 50 /var/log/mongodb/mongod.log
-                exit 1
-            fi
-            sleep 2
-        done
-fi
+sudo systemctl restart mongod
+echo "Waiting for MongoDB to restart with Replica Set config..."
+for i in {1..30}; do
+    if mongosh admin -u "\$MONGO_USER" -p "\$MONGO_PASS" --eval "db.adminCommand({ping: 1})" --quiet >/dev/null 2>&1; then
+        break
+    fi
+    if [ \$i -eq 30 ]; then
+        echo "ERROR: Timeout waiting for MongoDB to start!"
+        echo "--- MONGOD LOGS ---"
+        sudo tail -n 50 /var/log/mongodb/mongod.log
+        exit 1
+    fi
+    sleep 2
+done
 
 mongosh admin -u "\$MONGO_USER" -p "\$MONGO_PASS" --eval 'rs.initiate({_id: "rs0", members: [{_id: 0, host: "127.0.0.1:27017"}]})' || true
 sleep 5

@@ -129,7 +129,13 @@ def deployInstance() {
             echo "Warning: Secret is not valid JSON. Treating the entire secret string as the password."
         }
 
+        def mongoUserB64 = mongoUser.bytes.encodeBase64().toString()
+        def mongoPassB64 = mongoPass.bytes.encodeBase64().toString()
+
         writeFile file: 'setup_mongo.sh', text: """#!/bin/bash
+export MONGO_USER=\$(echo "${mongoUserB64}" | base64 -d 2>/dev/null || echo "${mongoUserB64}" | base64 --decode)
+export MONGO_PASS=\$(echo "${mongoPassB64}" | base64 -d 2>/dev/null || echo "${mongoPassB64}" | base64 --decode)
+
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     OS=\$ID
@@ -145,7 +151,7 @@ if [[ "\$OS" == "ubuntu"* ]] || [[ "\$OS" == "debian"* ]]; then
     sudo apt-get update
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mongodb-org
 elif [[ "\$OS" == "amzn"* ]] || [[ "\$OS" == "centos"* ]] || [[ "\$OS" == "rhel"* ]]; then
-    cat <<EOF | sudo tee /etc/yum.repos.d/mongodb-org-7.0.repo
+    cat << 'EOF' | sudo tee /etc/yum.repos.d/mongodb-org-7.0.repo
 [mongodb-org-7.0]
 name=MongoDB Repository
 baseurl=https://repo.mongodb.org/yum/amazon/2023/mongodb-org/7.0/x86_64/
@@ -175,7 +181,11 @@ for i in {1..30}; do
 done
 
 echo "Creating admin user..."
-mongosh admin --eval 'db.createUser({user: "${mongoUser}", pwd: "${mongoPass}", roles: [{role: "root", db: "admin"}]})'
+cat << 'EOF' > create_user.js
+db.createUser({ user: process.env.MONGO_USER, pwd: process.env.MONGO_PASS, roles: [{role: "root", db: "admin"}] })
+EOF
+mongosh admin create_user.js >/dev/null 2>&1 || true
+rm -f create_user.js
 
 echo "Enabling authentication..."
 sudo sed -i 's/^#security:/security:\\n  authorization: enabled/' /etc/mongod.conf
@@ -183,7 +193,7 @@ sudo sed -i 's/^#security:/security:\\n  authorization: enabled/' /etc/mongod.co
 sudo systemctl restart mongod
 echo "Waiting for MongoDB to restart with auth..."
 for i in {1..30}; do
-    if mongosh admin -u '${mongoUser}' -p '${mongoPass}' --eval "db.adminCommand({ping: 1})" --quiet >/dev/null 2>&1; then
+    if mongosh admin -u "\$MONGO_USER" -p "\$MONGO_PASS" --eval "db.adminCommand({ping: 1})" --quiet >/dev/null 2>&1; then
         break
     fi
     if [ \$i -eq 30 ]; then echo "Timeout waiting for authenticated MongoDB." && exit 1; fi
