@@ -25,17 +25,30 @@ pipeline {
                         export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
                         export AWS_DEFAULT_REGION=${params.AWS_REGION}
                         
-                        rm -f private_key.pem mongo_creds.json
+                        rm -f private_key.pem
                         aws secretsmanager get-secret-value --secret-id ${params.SECRET_NAME} --query SecretString --output text > private_key.pem
                         chmod 400 private_key.pem
-                        
-                        aws secretsmanager get-secret-value --secret-id ${params.MONGO_CREDENTIALS_SECRET} --query SecretString --output text > mongo_creds.json
                         """
                         
-                        def mongoCreds = readJSON file: 'mongo_creds.json'
-                        env.MONGO_USER = mongoCreds.username
-                        env.MONGO_PASS = mongoCreds.password
-                        sh "rm -f mongo_creds.json"
+                        def mongoCredsText = sh(script: """
+                        export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                        export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                        aws secretsmanager get-secret-value --secret-id ${params.MONGO_CREDENTIALS_SECRET} --query SecretString --output text --region ${params.AWS_REGION}
+                        """, returnStdout: true).trim()
+                        
+                        if (!mongoCredsText) {
+                            error "MongoDB credentials secret is empty or failed to retrieve."
+                        }
+                        
+                        env.MONGO_USER = "mongodb_admin"
+                        env.MONGO_PASS = mongoCredsText
+                        try {
+                            def mongoCreds = readJSON text: mongoCredsText
+                            if (mongoCreds.username) env.MONGO_USER = mongoCreds.username.trim()
+                            if (mongoCreds.password) env.MONGO_PASS = mongoCreds.password.trim()
+                        } catch (Exception e) {
+                            echo "Warning: Secret is not valid JSON. Treating the entire secret string as the password."
+                        }
                         
                         sh """
                         # Kill any existing stray SSH tunnel on port 27018
