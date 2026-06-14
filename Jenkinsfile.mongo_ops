@@ -81,6 +81,20 @@ pipeline {
                         echo "Warning: Secret is not valid JSON. Treating the entire secret string as the password."
                     }
 
+                    writeFile file: 'tmp_user.txt', text: mongoUser.trim()
+                    writeFile file: 'tmp_pass.txt', text: mongoPass.trim()
+                    def mongoUserB64 = ""
+                    def mongoPassB64 = ""
+                    if (isUnix()) {
+                        mongoUserB64 = sh(script: "tr -d '\\r\\n' < tmp_user.txt | base64 | tr -d '\\r\\n'", returnStdout: true).trim()
+                        mongoPassB64 = sh(script: "tr -d '\\r\\n' < tmp_pass.txt | base64 | tr -d '\\r\\n'", returnStdout: true).trim()
+                        sh "rm -f tmp_user.txt tmp_pass.txt"
+                    } else {
+                        mongoUserB64 = bat(script: "@powershell -NoProfile -Command \"[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((Get-Content -Path 'tmp_user.txt' -Raw).Trim()))\"", returnStdout: true).trim()
+                        mongoPassB64 = bat(script: "@powershell -NoProfile -Command \"[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((Get-Content -Path 'tmp_pass.txt' -Raw).Trim()))\"", returnStdout: true).trim()
+                        bat "del tmp_user.txt tmp_pass.txt"
+                    }
+
                     def jsScript = ""
                     switch(params.MONGO_ACTION) {
                         case 'CHECK_STATUS':
@@ -177,6 +191,9 @@ pipeline {
                     def scriptText = ""
                     if (params.MONGO_ACTION == 'CHECK_STATUS') {
                         scriptText = """#!/bin/bash
+export MONGO_USER=\$(echo "${mongoUserB64}" | base64 -d 2>/dev/null || echo "${mongoUserB64}" | base64 --decode)
+export MONGO_PASS=\$(echo "${mongoPassB64}" | base64 -d 2>/dev/null || echo "${mongoPassB64}" | base64 --decode)
+
 echo "--- MongoDB Status Check ---"
 if sudo systemctl is-active --quiet mongod; then
     echo "[Service] mongod is UP"
@@ -184,7 +201,7 @@ else
     echo "[Service] mongod is DOWN"
 fi
 
-if mongosh admin -u '${mongoUser}' -p '${mongoPass}' --eval "db.adminCommand({ping: 1})" --quiet >/dev/null 2>&1; then
+if mongosh admin -u "\$MONGO_USER" -p "\$MONGO_PASS" --eval "db.adminCommand({ping: 1})" --quiet >/dev/null 2>&1; then
     echo "[Connection] MongoDB is accepting authenticated connections (UP)"
 else
     echo "[Connection] MongoDB connection/authentication failed (DOWN)"
@@ -214,7 +231,10 @@ fi
 """
                     } else {
                         scriptText = """#!/bin/bash
-cat << 'EOF' | mongosh admin -u '${mongoUser}' -p '${mongoPass}' --quiet
+export MONGO_USER=\$(echo "${mongoUserB64}" | base64 -d 2>/dev/null || echo "${mongoUserB64}" | base64 --decode)
+export MONGO_PASS=\$(echo "${mongoPassB64}" | base64 -d 2>/dev/null || echo "${mongoPassB64}" | base64 --decode)
+
+mongosh admin -u "\$MONGO_USER" -p "\$MONGO_PASS" --quiet << 'EOF'
 ${jsScript}
 EOF
 """
