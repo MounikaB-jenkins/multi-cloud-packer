@@ -40,14 +40,26 @@ pipeline {
                             error "MongoDB credentials secret is empty or failed to retrieve."
                         }
                         
-                        env.MONGO_USER = "mongodb_admin"
-                        env.MONGO_PASS = mongoCredsText
+                        def mongoUser = "mongodb_admin"
+                        def mongoPass = mongoCredsText
                         try {
                             def mongoCreds = readJSON text: mongoCredsText
-                            if (mongoCreds.username) env.MONGO_USER = mongoCreds.username.trim()
-                            if (mongoCreds.password) env.MONGO_PASS = mongoCreds.password.trim()
+                            if (mongoCreds.username) mongoUser = mongoCreds.username.trim()
+                            if (mongoCreds.password) mongoPass = mongoCreds.password.trim()
                         } catch (Exception e) {
                             echo "Warning: Secret is not valid JSON. Treating the entire secret string as the password."
+                        }
+                        
+                        writeFile file: 'tmp_user.txt', text: mongoUser
+                        writeFile file: 'tmp_pass.txt', text: mongoPass
+                        if (isUnix()) {
+                            env.MONGO_USER_B64 = sh(script: "tr -d '\\r\\n' < tmp_user.txt | base64 | tr -d '\\r\\n'", returnStdout: true).trim()
+                            env.MONGO_PASS_B64 = sh(script: "tr -d '\\r\\n' < tmp_pass.txt | base64 | tr -d '\\r\\n'", returnStdout: true).trim()
+                            sh "rm -f tmp_user.txt tmp_pass.txt"
+                        } else {
+                            env.MONGO_USER_B64 = bat(script: "@powershell -NoProfile -Command \"[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((Get-Content -Path 'tmp_user.txt' -Raw).Trim()))\"", returnStdout: true).trim()
+                            env.MONGO_PASS_B64 = bat(script: "@powershell -NoProfile -Command \"[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((Get-Content -Path 'tmp_pass.txt' -Raw).Trim()))\"", returnStdout: true).trim()
+                            bat "del tmp_user.txt tmp_pass.txt"
                         }
                         
                         sh """
@@ -123,12 +135,15 @@ pipeline {
                         export PATH="\$PWD/mongodb-database-tools-amazon2-x86_64-100.9.4/bin:\$PATH"
                     fi
                     
+                    export MONGO_USER=\$(echo "${env.MONGO_USER_B64}" | base64 -d 2>/dev/null || echo "${env.MONGO_USER_B64}" | base64 --decode)
+                    export MONGO_PASS=\$(echo "${env.MONGO_PASS_B64}" | base64 -d 2>/dev/null || echo "${env.MONGO_PASS_B64}" | base64 --decode)
+                    
                     TIMESTAMP=\$(date +'%Y-%m-%d_%H-%M-%S')
                     
                     if [ "${params.ACTION}" = "FULL_BACKUP" ]; then
                         echo "=== Taking Base FULL BACKUP ==="
                         mkdir -p "dump"
-                        mongodump --host="127.0.0.1" --port="27018" --username="${env.MONGO_USER}" --password="${env.MONGO_PASS}" --authenticationDatabase="admin" --oplog --out="dump"
+                        mongodump --host="127.0.0.1" --port="27018" --username="\$MONGO_USER" --password="\$MONGO_PASS" --authenticationDatabase="admin" --oplog --out="dump"
                         
                         tar -czf full_backup_\${TIMESTAMP}.tar.gz dump/
                         aws s3 cp full_backup_\${TIMESTAMP}.tar.gz "s3://${params.S3_BUCKET_NAME}/full-backups/"
@@ -137,7 +152,7 @@ pipeline {
                     elif [ "${params.ACTION}" = "OPLOG_BACKUP" ]; then
                         echo "=== Taking Incremental OPLOG BACKUP ==="
                         mkdir -p "oplog_dump"
-                        mongodump --host="127.0.0.1" --port="27018" --username="${env.MONGO_USER}" --password="${env.MONGO_PASS}" --authenticationDatabase="admin" -d local -c oplog.rs --out="oplog_dump"
+                        mongodump --host="127.0.0.1" --port="27018" --username="\$MONGO_USER" --password="\$MONGO_PASS" --authenticationDatabase="admin" -d local -c oplog.rs --out="oplog_dump"
                         
                         tar -czf oplog_backup_\${TIMESTAMP}.tar.gz oplog_dump/
                         aws s3 cp oplog_backup_\${TIMESTAMP}.tar.gz "s3://${params.S3_BUCKET_NAME}/oplog-backups/"
@@ -169,10 +184,10 @@ pipeline {
                             done
                             
                             echo "Replaying merged oplogs up to timestamp: ${params.RESTORE_TIMESTAMP}..."
-                            mongorestore --host="127.0.0.1" --port="27018" --username="${env.MONGO_USER}" --password="${env.MONGO_PASS}" --authenticationDatabase="admin" --oplogReplay --oplogLimit "${params.RESTORE_TIMESTAMP}" --drop dump/
+                            mongorestore --host="127.0.0.1" --port="27018" --username="\$MONGO_USER" --password="\$MONGO_PASS" --authenticationDatabase="admin" --oplogReplay --oplogLimit "${params.RESTORE_TIMESTAMP}" --drop dump/
                         else
                             echo "No RESTORE_TIMESTAMP provided. Performing full base restore..."
-                            mongorestore --host="127.0.0.1" --port="27018" --username="${env.MONGO_USER}" --password="${env.MONGO_PASS}" --authenticationDatabase="admin" --oplogReplay --drop dump/
+                            mongorestore --host="127.0.0.1" --port="27018" --username="\$MONGO_USER" --password="\$MONGO_PASS" --authenticationDatabase="admin" --oplogReplay --drop dump/
                         fi
                         
                         echo "Point-In-Time Recovery completed successfully!"

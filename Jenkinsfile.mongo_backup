@@ -40,14 +40,26 @@ pipeline {
                             error "MongoDB credentials secret is empty or failed to retrieve."
                         }
                         
-                        env.MONGO_USER = "mongodb_admin"
-                        env.MONGO_PASS = mongoCredsText
+                        def mongoUser = "mongodb_admin"
+                        def mongoPass = mongoCredsText
                         try {
                             def mongoCreds = readJSON text: mongoCredsText
-                            if (mongoCreds.username) env.MONGO_USER = mongoCreds.username.trim()
-                            if (mongoCreds.password) env.MONGO_PASS = mongoCreds.password.trim()
+                            if (mongoCreds.username) mongoUser = mongoCreds.username.trim()
+                            if (mongoCreds.password) mongoPass = mongoCreds.password.trim()
                         } catch (Exception e) {
                             echo "Warning: Secret is not valid JSON. Treating the entire secret string as the password."
+                        }
+                        
+                        writeFile file: 'tmp_user.txt', text: mongoUser
+                        writeFile file: 'tmp_pass.txt', text: mongoPass
+                        if (isUnix()) {
+                            env.MONGO_USER_B64 = sh(script: "tr -d '\\r\\n' < tmp_user.txt | base64 | tr -d '\\r\\n'", returnStdout: true).trim()
+                            env.MONGO_PASS_B64 = sh(script: "tr -d '\\r\\n' < tmp_pass.txt | base64 | tr -d '\\r\\n'", returnStdout: true).trim()
+                            sh "rm -f tmp_user.txt tmp_pass.txt"
+                        } else {
+                            env.MONGO_USER_B64 = bat(script: "@powershell -NoProfile -Command \"[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((Get-Content -Path 'tmp_user.txt' -Raw).Trim()))\"", returnStdout: true).trim()
+                            env.MONGO_PASS_B64 = bat(script: "@powershell -NoProfile -Command \"[Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes((Get-Content -Path 'tmp_pass.txt' -Raw).Trim()))\"", returnStdout: true).trim()
+                            bat "del tmp_user.txt tmp_pass.txt"
                         }
                         
                         echo "Setting up SSH Tunnel to ${params.TARGET_PRIVATE_IP}..."
@@ -82,8 +94,8 @@ pipeline {
                         echo "Ensuring target MongoDB is configured as a Replica Set for oplog backup..."
                         cat << 'EOF' > config_mongo.sh
 #!/bin/bash
-MONGO_USER="\$1"
-MONGO_PASS="\$2"
+export MONGO_USER=\$(echo "${env.MONGO_USER_B64}" | base64 -d 2>/dev/null || echo "${env.MONGO_USER_B64}" | base64 --decode)
+export MONGO_PASS=\$(echo "${env.MONGO_PASS_B64}" | base64 -d 2>/dev/null || echo "${env.MONGO_PASS_B64}" | base64 --decode)
 
 if grep -q 'authorization: enabled' /etc/mongod.conf && ! grep -q 'keyFile' /etc/mongod.conf; then
     echo 'Setting up keyFile for Replica Set authentication...'
@@ -125,13 +137,13 @@ EOF
 
                         if [ -n "${params.BASTION_IP}" ]; then
                             scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" config_mongo.sh \$TARGET_USER@${params.TARGET_PRIVATE_IP}:/tmp/config_mongo.sh
-                            ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" \$TARGET_USER@${params.TARGET_PRIVATE_IP} "bash /tmp/config_mongo.sh '${env.MONGO_USER}' '${env.MONGO_PASS}'"
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" \$TARGET_USER@${params.TARGET_PRIVATE_IP} "bash /tmp/config_mongo.sh"
                             
                             echo "Tunneling via Bastion as \$BASTION_USER to target as \$TARGET_USER..."
                             ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" \$TARGET_USER@${params.TARGET_PRIVATE_IP}
                         else
                             scp -i private_key.pem -o StrictHostKeyChecking=no config_mongo.sh \$TARGET_USER@${params.TARGET_PRIVATE_IP}:/tmp/config_mongo.sh
-                            ssh -i private_key.pem -o StrictHostKeyChecking=no \$TARGET_USER@${params.TARGET_PRIVATE_IP} "bash /tmp/config_mongo.sh '${env.MONGO_USER}' '${env.MONGO_PASS}'"
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no \$TARGET_USER@${params.TARGET_PRIVATE_IP} "bash /tmp/config_mongo.sh"
                             
                             echo "Tunneling directly to Private IP as \$TARGET_USER..."
                             ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 \$TARGET_USER@${params.TARGET_PRIVATE_IP}
@@ -167,7 +179,9 @@ EOF
                     mkdir -p "${currentBackupPath}"
                     
                     # Execute mongodump locally routing through the SSH tunnel
-                    mongodump --host="127.0.0.1" --port="27018" --username="${env.MONGO_USER}" --password="${env.MONGO_PASS}" --authenticationDatabase="admin" --oplog --out="${currentBackupPath}"
+                    export MONGO_USER=\$(echo "${env.MONGO_USER_B64}" | base64 -d 2>/dev/null || echo "${env.MONGO_USER_B64}" | base64 --decode)
+                    export MONGO_PASS=\$(echo "${env.MONGO_PASS_B64}" | base64 -d 2>/dev/null || echo "${env.MONGO_PASS_B64}" | base64 --decode)
+                    mongodump --host="127.0.0.1" --port="27018" --username="\$MONGO_USER" --password="\$MONGO_PASS" --authenticationDatabase="admin" --oplog --out="${currentBackupPath}"
                     
                     # Update the 'latest' symlink for easy future restores
                     ln -sfn "${currentBackupPath}" "${env.WORKSPACE}/${safeBackupDir}/latest"
@@ -205,7 +219,9 @@ EOF
                     fi
                     
                     # Execute mongorestore locally routing through the SSH tunnel
-                    mongorestore --host="127.0.0.1" --port="27018" --username="${env.MONGO_USER}" --password="${env.MONGO_PASS}" --authenticationDatabase="admin" --oplogReplay ${dropFlag} "${targetBackupPath}"
+                    export MONGO_USER=\$(echo "${env.MONGO_USER_B64}" | base64 -d 2>/dev/null || echo "${env.MONGO_USER_B64}" | base64 --decode)
+                    export MONGO_PASS=\$(echo "${env.MONGO_PASS_B64}" | base64 -d 2>/dev/null || echo "${env.MONGO_PASS_B64}" | base64 --decode)
+                    mongorestore --host="127.0.0.1" --port="27018" --username="\$MONGO_USER" --password="\$MONGO_PASS" --authenticationDatabase="admin" --oplogReplay ${dropFlag} "${targetBackupPath}"
                     """
                     echo "Restore successful!"
                 }
