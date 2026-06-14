@@ -214,7 +214,7 @@ EOF
                     fi
                     
                     if [ ! -d "${targetBackupPath}" ]; then
-                        echo "ERROR: Backup directory ${targetBackupPath} not found!"
+                        echo "ERROR: Backup directory ${targetBackupPath} not found locally!"
                         exit 1
                     fi
                     
