@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     parameters {
-        choice(name: 'ACTION', choices: ['FULL_BACKUP', 'OPLOG_BACKUP', 'PITR_RESTORE'], description: 'Action: Take a base full backup, an incremental oplog backup, or restore to a specific point in time.')
+        choice(name: 'ACTION', choices: ['FULL_BACKUP', 'OPLOG_BACKUP', 'PITR_RESTORE', 'SCHEDULE_CRON'], description: 'Action: Take base backup, incremental oplog backup, restore PITR, or deploy automated Cron schedules directly to the DB instance.')
         string(name: 'S3_BUCKET_NAME', defaultValue: 'my-company-mongo-pitr-backups', description: 'AWS S3 Bucket name for storing continuous backups.')
         string(name: 'TARGET_PRIVATE_IP', defaultValue: '', description: 'Private IP of the MongoDB instance.')
         string(name: 'BASTION_IP', defaultValue: '', description: 'Public IP of the Bastion Host (Leave empty if Jenkins can reach the Private IP directly).')
@@ -78,6 +78,8 @@ pipeline {
                                 echo "ERROR: Failed to connect via Bastion. Check your SSH Key or IPs."
                                 exit 1
                             fi
+                            echo "\$TARGET_USER" > target_user.txt
+                            echo "\$BASTION_USER" > bastion_user.txt
                             echo "Tunneling via Bastion as \$BASTION_USER to target as \$TARGET_USER..."
                             ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" \$TARGET_USER@${params.TARGET_PRIVATE_IP}
                         else
@@ -90,12 +92,114 @@ pipeline {
                                 echo "ERROR: Failed to connect to Target. Check your SSH Key or IP."
                                 exit 1
                             fi
+                            echo "\$TARGET_USER" > target_user.txt
                             echo "Tunneling directly to Private IP as \$TARGET_USER..."
                             ssh -i private_key.pem -o StrictHostKeyChecking=no -f -N -L 27018:127.0.0.1:27017 \$TARGET_USER@${params.TARGET_PRIVATE_IP}
                         fi
                         
                         echo "Waiting 5 seconds for tunnel to establish..."
                         sleep 5
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Cron to Instance') {
+            when { expression { params.ACTION == 'SCHEDULE_CRON' } }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'aws-creds', usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    script {
+                        def cronScript = """#!/bin/bash
+sudo mkdir -p /opt/mongo_pitr
+sudo chown \$USER:\$USER /opt/mongo_pitr
+
+# Install unzip if not present (required for AWS CLI)
+if ! command -v unzip &> /dev/null; then
+    sudo yum install -y unzip 2>/dev/null || sudo apt-get install -y unzip 2>/dev/null
+fi
+
+if ! command -v aws &> /dev/null; then
+    echo "Installing AWS CLI..."
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    unzip -q awscliv2.zip
+    sudo ./aws/install
+    rm -rf awscliv2.zip aws/
+fi
+
+if ! command -v mongodump &> /dev/null; then
+    echo "Installing MongoDB Database Tools..."
+    curl -fsSL https://fastdl.mongodb.org/tools/db/mongodb-database-tools-amazon2-x86_64-100.9.4.tgz -o mongo-tools.tgz
+    tar -xzf mongo-tools.tgz
+    sudo cp mongodb-database-tools-*/bin/* /usr/local/bin/
+    rm -rf mongo-tools.tgz mongodb-database-tools-*/
+fi
+
+cat << 'SCRIPT_EOF' > /opt/mongo_pitr/full_backup.sh
+#!/bin/bash
+export PATH="/usr/local/bin:/usr/bin:\\\$PATH"
+export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}"
+export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}"
+export AWS_DEFAULT_REGION="${params.AWS_REGION}"
+
+export MONGO_USER=\\\$(echo "${env.MONGO_USER_B64}" | base64 -d 2>/dev/null || echo "${env.MONGO_USER_B64}" | base64 --decode)
+export MONGO_PASS=\\\$(echo "${env.MONGO_PASS_B64}" | base64 -d 2>/dev/null || echo "${env.MONGO_PASS_B64}" | base64 --decode)
+
+TIMESTAMP=\\\$(date +'%Y-%m-%d_%H-%M-%S')
+DIR="/opt/mongo_pitr/dump_\\\$TIMESTAMP"
+
+mongodump --host="127.0.0.1" --port="27017" --username="\\\$MONGO_USER" --password="\\\$MONGO_PASS" --authenticationDatabase="admin" --oplog --out="\\\$DIR"
+tar -czf "/opt/mongo_pitr/full_backup_\\\$TIMESTAMP.tar.gz" -C "/opt/mongo_pitr" "dump_\\\$TIMESTAMP"
+aws s3 cp "/opt/mongo_pitr/full_backup_\\\$TIMESTAMP.tar.gz" "s3://${params.S3_BUCKET_NAME}/full-backups/"
+
+rm -rf "\\\$DIR" "/opt/mongo_pitr/full_backup_\\\$TIMESTAMP.tar.gz"
+SCRIPT_EOF
+
+cat << 'SCRIPT_EOF' > /opt/mongo_pitr/oplog_backup.sh
+#!/bin/bash
+export PATH="/usr/local/bin:/usr/bin:\\\$PATH"
+export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}"
+export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}"
+export AWS_DEFAULT_REGION="${params.AWS_REGION}"
+
+export MONGO_USER=\\\$(echo "${env.MONGO_USER_B64}" | base64 -d 2>/dev/null || echo "${env.MONGO_USER_B64}" | base64 --decode)
+export MONGO_PASS=\\\$(echo "${env.MONGO_PASS_B64}" | base64 -d 2>/dev/null || echo "${env.MONGO_PASS_B64}" | base64 --decode)
+
+TIMESTAMP=\\\$(date +'%Y-%m-%d_%H-%M-%S')
+DIR="/opt/mongo_pitr/oplog_\\\$TIMESTAMP"
+
+mongodump --host="127.0.0.1" --port="27017" --username="\\\$MONGO_USER" --password="\\\$MONGO_PASS" --authenticationDatabase="admin" -d local -c oplog.rs --out="\\\$DIR"
+tar -czf "/opt/mongo_pitr/oplog_backup_\\\$TIMESTAMP.tar.gz" -C "/opt/mongo_pitr" "oplog_\\\$TIMESTAMP"
+aws s3 cp "/opt/mongo_pitr/oplog_backup_\\\$TIMESTAMP.tar.gz" "s3://${params.S3_BUCKET_NAME}/oplog-backups/"
+
+rm -rf "\\\$DIR" "/opt/mongo_pitr/oplog_backup_\\\$TIMESTAMP.tar.gz"
+SCRIPT_EOF
+
+chmod +x /opt/mongo_pitr/*.sh
+
+crontab -l 2>/dev/null | grep -v "/opt/mongo_pitr/" > current_cron.txt || true
+echo "0 2 * * * /opt/mongo_pitr/full_backup.sh" >> current_cron.txt
+echo "*/15 * * * * /opt/mongo_pitr/oplog_backup.sh" >> current_cron.txt
+crontab current_cron.txt
+rm -f current_cron.txt
+
+echo "Cron jobs successfully deployed and scheduled on instance!"
+"""
+                        writeFile file: 'setup_pitr_cron.sh', text: cronScript
+                        
+                        sh """
+                        TARGET_USER=\$(cat target_user.txt)
+                        BASTION_USER=\$(cat bastion_user.txt 2>/dev/null || echo "")
+                        
+                        if [ -n "${params.BASTION_IP}" ]; then
+                            echo "Deploying script via Bastion..."
+                            scp -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" setup_pitr_cron.sh \$TARGET_USER@${params.TARGET_PRIVATE_IP}:/tmp/setup_pitr_cron.sh
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no -o "ProxyCommand=ssh -i private_key.pem -o StrictHostKeyChecking=no -W %h:%p \$BASTION_USER@${params.BASTION_IP}" \$TARGET_USER@${params.TARGET_PRIVATE_IP} "bash /tmp/setup_pitr_cron.sh"
+                        else
+                            echo "Deploying script directly..."
+                            scp -i private_key.pem -o StrictHostKeyChecking=no setup_pitr_cron.sh \$TARGET_USER@${params.TARGET_PRIVATE_IP}:/tmp/setup_pitr_cron.sh
+                            ssh -i private_key.pem -o StrictHostKeyChecking=no \$TARGET_USER@${params.TARGET_PRIVATE_IP} "bash /tmp/setup_pitr_cron.sh"
+                        fi
                         """
                     }
                 }
@@ -112,7 +216,7 @@ pipeline {
                     
                     if ! aws s3api head-bucket --bucket "${params.S3_BUCKET_NAME}" 2>/dev/null; then
                         echo "Creating S3 bucket ${params.S3_BUCKET_NAME} for PITR backups..."
-                        aws s3 mb "s3://${params.S3_BUCKET_NAME}" --region "${params.AWS_REGION}"
+                        aws s3 mb "s3://${params.S3_BUCKET_NAME}" --region "${params.AWS_REGION}" || echo "WARNING: Creation failed. Assuming bucket already exists and proceeding..."
                     fi
                     """
                 }
@@ -202,7 +306,7 @@ pipeline {
         always {
             sh """
             pkill -f "27018:127.0.0.1:27017" || true
-            rm -f private_key.pem
+            rm -f private_key.pem target_user.txt bastion_user.txt setup_pitr_cron.sh
             rm -rf dump/ oplog_dump/ downloaded_oplogs/
             rm -f *.tar.gz mongo-tools.tgz
             rm -rf mongodb-database-tools-*

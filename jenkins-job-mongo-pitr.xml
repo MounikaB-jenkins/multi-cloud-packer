@@ -14,6 +14,7 @@
               <string>FULL_BACKUP</string>
               <string>OPLOG_BACKUP</string>
               <string>PITR_RESTORE</string>
+              <string>SCHEDULE_CRON</string>
             </a>
           </choices>
         </hudson.model.ChoiceParameterDefinition>
